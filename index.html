@@ -13,23 +13,209 @@
   <body>
     <main class="app-shell">
       <header class="topbar">
-        <div class="brand"><div class="brand-mark">o</div><div><div class="brand-name">oiva</div><div class="brand-subtitle">your money, made clear</div></div></div>
-        <div class="topbar-actions"><button class="icon-button" aria-label="Notifications">⌁</button><button class="avatar" aria-label="Open profile">RM</button></div>
+        <div class="brand">
+          <div class="brand-mark">o</div>
+          <div>
+            <div class="brand-name">oiva</div>
+            <div class="brand-subtitle">your money, made clear</div>
+          </div>
+        </div>
+        <div class="topbar-actions">
+          <div class="customer-picker">
+            <label for="customer-select" class="sr-only">Customer Profile</label>
+            <select id="customer-select" class="customer-select" aria-label="Customer Profile">
+              <option value="CUST00001">CUST00001</option>
+            </select>
+          </div>
+          <button class="avatar" id="user-avatar" aria-label="Open profile">C1</button>
+        </div>
       </header>
-      <nav class="tabs" aria-label="Main navigation"><button class="tab active" data-view="home">Overview</button><button class="tab" data-view="chat">Ask Oiva</button><button class="tab" data-view="activity">Activity</button></nav>
 
+      <nav class="tabs" aria-label="Main navigation">
+        <button class="tab active" data-view="home">Overview</button>
+        <button class="tab" data-view="chat">Ask Oiva</button>
+        <button class="tab" data-view="activity">Activity</button>
+      </nav>
+
+      <!-- Overview View -->
       <section id="home-view" class="view active-view">
-        <div class="welcome-row"><div><p class="eyebrow">Thursday, 14 March</p><h1>Good morning, <span>Rafi.</span></h1></div><div class="privacy-pill"><span class="status-dot"></span> Private to you</div></div>
-        <section class="hero-card"><div class="hero-copy"><p class="eyebrow light">SAFE TO SPEND · THIS WEEK</p><div class="hero-amount">€184<span>.20</span></div><p class="hero-description">after bills, savings and your upcoming commitments</p><button class="text-button light-button" data-view-target="chat" data-prompt="Why is my safe-to-spend €184.20?">How did you get this? <span>→</span></button></div><div class="ring-wrap"><div class="progress-ring"><div class="ring-center"><strong>68%</strong><small>of week left</small></div></div></div></section>
-        <section class="insight-card"><div class="section-heading"><div><p class="eyebrow">A small nudge</p><h2>Your everyday spending</h2></div><span class="spark">✦</span></div><p class="insight-text">You’ve spent <strong>€62 less</strong> on takeaways this month than your usual. That’s a quiet win worth noticing.</p><div class="mini-bars" aria-label="Takeaway spending comparison"><div class="bar-item"><div class="bar bar-muted" style="height:44%"></div><span>usual</span></div><div class="bar-item"><div class="bar bar-accent" style="height:25%"></div><span>this month</span></div><div class="bar-item"><div class="bar bar-muted" style="height:55%"></div><span>last month</span></div><div class="bar-item"><div class="bar bar-muted" style="height:38%"></div><span>Jan</span></div><div class="bar-item"><div class="bar bar-muted" style="height:46%"></div><span>Feb</span></div></div></section>
-        <section class="spending-section"><div class="section-heading"><div><p class="eyebrow">MARCH · SO FAR</p><h2>Where your money goes</h2></div><button class="text-button" data-view-target="activity">See all <span>→</span></button></div><div class="spend-total"><strong>€1,462.80</strong><span>of €2,100 monthly plan</span></div><div class="spend-track"><span style="width:69.6%"></span></div><div class="category-list"><button class="category-row" data-category="Home & bills"><span class="category-icon rose">⌂</span><span class="category-name">Home & bills<small>Rent, electricity, phone</small></span><strong>€823.00</strong><span class="row-arrow">›</span></button><button class="category-row" data-category="Everyday"><span class="category-icon yellow">✦</span><span class="category-name">Everyday<small>Groceries, cafés, transport</small></span><strong>€421.60</strong><span class="row-arrow">›</span></button><button class="category-row" data-category="Fun & extras"><span class="category-icon blue">◌</span><span class="category-name">Fun & extras<small>Hobbies, restaurants, shopping</small></span><strong>€218.20</strong><span class="row-arrow">›</span></button></div></section>
+        <div class="welcome-row">
+          <div>
+            <p class="eyebrow" id="welcome-date">Wednesday, 30 September 2026</p>
+            <h1>Good morning, <span id="welcome-name">CUST00001</span>.</h1>
+          </div>
+          <div class="privacy-pill" id="customer-profile-pill">
+            <span class="status-dot"></span> <span id="customer-demographics">Age 63 · 00990</span>
+          </div>
+        </div>
+
+        <section class="hero-card">
+          <div class="hero-copy">
+            <p class="eyebrow light">SAFE TO SPEND · THIS WEEK</p>
+            <div class="hero-amount" id="hero-safe-amount">€264<span>.78</span></div>
+            <p class="hero-description" id="hero-description">after mandatory bills, savings goals, and upcoming commitments</p>
+            <button class="text-button light-button" id="hero-explain-btn" data-view-target="chat" data-prompt="Why is my safe-to-spend €264.78?">
+              How did you get this? <span>→</span>
+            </button>
+          </div>
+          <div class="ring-wrap">
+            <div class="progress-ring" id="hero-progress-ring">
+              <div class="ring-center">
+                <strong id="hero-ring-percent">72%</strong>
+                <small id="hero-ring-label">safe buffer</small>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="insight-card">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">A small nudge</p>
+              <h2>Your everyday spending</h2>
+            </div>
+            <span class="spark">✦</span>
+          </div>
+          <p class="insight-text" id="insight-text">Analyzing your everyday transactions...</p>
+          <div class="mini-bars" id="insight-bars" aria-label="Everyday spending comparison">
+            <!-- Populated dynamically from real monthly data -->
+          </div>
+        </section>
+
+        <section class="spending-section">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow" id="spending-month-eyebrow">SEPTEMBER 2026 · LATEST MONTH</p>
+              <h2>Where your money goes</h2>
+            </div>
+            <button class="text-button" data-view-target="activity">See all <span>→</span></button>
+          </div>
+          <div class="spend-total">
+            <strong id="spending-total-amount">€2,114.38</strong>
+            <span id="spending-plan-amount">of €2,447.81 monthly income</span>
+          </div>
+          <div class="spend-track">
+            <span id="spending-progress-bar" style="width: 86.4%"></span>
+          </div>
+          <div class="category-list" id="basket-list">
+            <button class="category-row" data-basket="mandatory_regular">
+              <span class="category-icon rose">⌂</span>
+              <span class="category-name">
+                Mandatory and regular
+                <small id="basket-regular-desc">Housing & utilities</small>
+              </span>
+              <strong id="basket-regular-amount">€620.31</strong>
+              <span class="row-arrow">›</span>
+            </button>
+            <button class="category-row" data-basket="mandatory_irregular">
+              <span class="category-icon yellow">🔧</span>
+              <span class="category-name">
+                Mandatory and irregular
+                <small id="basket-irregular-desc">Health, repairs & home maintenance</small>
+              </span>
+              <strong id="basket-irregular-amount">€0.00</strong>
+              <span class="row-arrow">›</span>
+            </button>
+            <button class="category-row" data-basket="everyday">
+              <span class="category-icon blue">☕</span>
+              <span class="category-name">
+                Everyday spending
+                <small id="basket-everyday-desc">Groceries, dining, transit & lifestyle</small>
+              </span>
+              <strong id="basket-everyday-amount">€1,258.35</strong>
+              <span class="row-arrow">›</span>
+            </button>
+          </div>
+        </section>
       </section>
 
-      <section id="chat-view" class="view"><div class="chat-header"><button class="back-button" data-view-target="home">←</button><div><p class="eyebrow">YOUR FINANCIAL COACH</p><h1>Ask Oiva <span>✦</span></h1></div><span class="online-badge"><span class="status-dot"></span> Ready</span></div><div class="chat-intro"><div class="oiva-face">o</div><div><strong>Hi, I’m Oiva.</strong><p>Ask me anything about your money. I’ll show my working, not just the answer.</p></div></div><div id="chat-messages" class="chat-messages"></div><div class="suggestions"><p class="eyebrow">TRY ASKING</p><div class="suggestion-row"><button data-prompt="What kind of spender am I?">What kind of spender am I?</button><button data-prompt="How much could I save if I reduced dining out by 20%?">Reduce dining out by 20%</button><button data-prompt="How much did I spend on taxis last month?">Taxi spend last month</button></div></div><form id="chat-form" class="chat-input"><input id="chat-input" autocomplete="off" placeholder="Ask about your money..." aria-label="Ask about your money" /><button type="submit" aria-label="Send message">↑</button></form><p class="chat-footnote">Oiva uses your connected accounts. <u>Your data stays yours.</u></p></section>
+      <!-- Ask Oiva Chat View -->
+      <section id="chat-view" class="view">
+        <div class="chat-header">
+          <button class="back-button" data-view-target="home">←</button>
+          <div>
+            <p class="eyebrow">YOUR FINANCIAL COACH</p>
+            <h1>Ask Oiva <span>✦</span></h1>
+          </div>
+          <span class="online-badge"><span class="status-dot"></span> Ready</span>
+        </div>
+        <div class="chat-intro">
+          <div class="oiva-face">o</div>
+          <div>
+            <strong>Hi, I’m Oiva.</strong>
+            <p>Ask me anything about your money. I calculate answers from your real transaction data and show my working.</p>
+          </div>
+        </div>
+        <div id="chat-messages" class="chat-messages"></div>
+        <div class="suggestions">
+          <p class="eyebrow">TRY ASKING</p>
+          <div class="suggestion-row">
+            <button data-prompt="What kind of spender am I?">What kind of spender am I?</button>
+            <button data-prompt="What can I safely spend this week?">Safe to spend this week</button>
+            <button data-prompt="Where did my money go?">Where did my money go?</button>
+            <button data-prompt="How much could I save if I reduced dining out by 20%?">Reduce dining out by 20%</button>
+            <button data-prompt="How much did I spend on taxis?">Taxi spend</button>
+          </div>
+        </div>
+        <form id="chat-form" class="chat-input">
+          <input id="chat-input" autocomplete="off" placeholder="Ask about your money..." aria-label="Ask about your money" />
+          <button type="submit" aria-label="Send message">↑</button>
+        </form>
+        <p class="chat-footnote">Oiva uses your connected S-Pankki accounts. <u>Your data stays yours.</u></p>
+      </section>
 
-      <section id="activity-view" class="view"><div class="welcome-row"><div><p class="eyebrow">YOUR DATA</p><h1>Activity <span>· March</span></h1></div><div class="activity-actions"><button class="filter-button">Filter <span>⌄</span></button><button class="load-button" id="load-data-button">Load CSV</button><input id="csv-input" type="file" accept=".csv,text/csv" hidden /></div></div><div id="data-status" class="data-status"><span class="status-dot"></span> Demo profile · ready to connect to transaction data</div><div class="activity-summary"><div><span class="eyebrow">IN</span><strong class="income">€2,800.00</strong></div><div><span class="eyebrow">OUT</span><strong>€1,462.80</strong></div><div><span class="eyebrow">SAVED</span><strong class="saved">€514.40</strong></div></div><div class="activity-list"><p class="date-label">TODAY · 14 MARCH</p><div class="transaction"><span class="transaction-icon yellow">✦</span><div><strong>K-Market Ruoholahti</strong><small>Groceries · Everyday</small></div><b>− €34.80</b></div><div class="transaction"><span class="transaction-icon blue">▰</span><div><strong>HSL Helsinki</strong><small>Transport · Everyday</small></div><b>− €3.20</b></div><p class="date-label">YESTERDAY · 13 MARCH</p><div class="transaction"><span class="transaction-icon rose">⌂</span><div><strong>S-Bank</strong><small>Monthly rent · Home & bills</small></div><b>− €740.00</b></div><div class="transaction"><span class="transaction-icon purple">◌</span><div><strong>Wolt</strong><small>Dining out · Fun & extras</small></div><b>− €18.90</b></div><div class="transaction"><span class="transaction-icon green">↗</span><div><strong>Salary · March</strong><small>Income</small></div><b class="income">+ €2,800.00</b></div></div></section>
-      <footer class="bottom-nav"><button class="bottom-tab active" data-view="home"><span>⌂</span>Overview</button><button class="bottom-tab" data-view="chat"><span>✦</span>Ask Oiva</button><button class="bottom-tab" data-view="activity"><span>▤</span>Activity</button></footer>
+      <!-- Activity View -->
+      <section id="activity-view" class="view">
+        <div class="welcome-row">
+          <div>
+            <p class="eyebrow">YOUR DATA</p>
+            <h1 id="activity-title">Activity <span>· Sep 2026</span></h1>
+          </div>
+          <div class="activity-actions">
+            <select id="activity-filter" class="filter-button" aria-label="Filter activity by basket">
+              <option value="all">All Baskets</option>
+              <option value="mandatory_regular">Mandatory & Regular ⌂</option>
+              <option value="mandatory_irregular">Mandatory & Irregular 🔧</option>
+              <option value="everyday">Everyday spending ☕</option>
+              <option value="savings">Savings ◌</option>
+              <option value="income">Inflows ↗</option>
+            </select>
+            <button class="load-button" id="load-data-button">Load CSV</button>
+            <input id="csv-input" type="file" accept=".csv,text/csv" hidden />
+          </div>
+        </div>
+
+        <div id="data-status" class="data-status">
+          <span class="status-dot"></span> Loading real S-Pankki dataset...
+        </div>
+
+        <div class="activity-summary">
+          <div>
+            <span class="eyebrow">IN</span>
+            <strong class="income" id="activity-in">€0.00</strong>
+          </div>
+          <div>
+            <span class="eyebrow">OUT</span>
+            <strong id="activity-out">€0.00</strong>
+          </div>
+          <div>
+            <span class="eyebrow">SAVED</span>
+            <strong class="saved" id="activity-saved">€0.00</strong>
+          </div>
+        </div>
+
+        <div class="activity-list" id="activity-list-container">
+          <!-- Dynamically populated from real transactions -->
+        </div>
+      </section>
+
+      <footer class="bottom-nav">
+        <button class="bottom-tab active" data-view="home"><span>⌂</span>Overview</button>
+        <button class="bottom-tab" data-view="chat"><span>✦</span>Ask Oiva</button>
+        <button class="bottom-tab" data-view="activity"><span>▤</span>Activity</button>
+      </footer>
     </main>
+
     <script src="app.js"></script>
   </body>
 </html>

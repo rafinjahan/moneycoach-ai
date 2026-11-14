@@ -39,12 +39,13 @@ button {
   border: 0;
 }
 
-/* App Shell with ample bottom padding so bottom-nav never overlaps */
+/* App Shell with matching padding-top for fixed top header and padding-bottom for bottom-nav */
 .app-shell {
-  width: min(100%, 520px);
+  width: min(100%, 480px);
   min-height: 100vh;
-  margin: auto;
-  padding: 22px 22px 145px;
+  margin: 0 auto;
+  padding: 120px 22px 145px;
+  padding-top: 120px;
   background: var(--paper);
   position: relative;
 }
@@ -63,8 +64,19 @@ button {
 }
 
 .topbar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  margin: 0 auto;
+  width: 100%;
+  max-width: 480px;
+  z-index: 100;
+  background: var(--paper);
+  box-sizing: border-box;
+  padding: 18px 22px 10px;
+  margin-bottom: 0;
   justify-content: space-between;
-  margin-bottom: 25px;
 }
 
 .brand {
@@ -144,10 +156,21 @@ button {
 }
 
 .tabs {
+  position: fixed;
+  top: 62px;
+  left: 0;
+  right: 0;
+  margin: 0 auto;
+  width: 100%;
+  max-width: 480px;
+  z-index: 100;
+  background: var(--paper);
+  box-sizing: border-box;
+  padding: 0 22px;
   border-bottom: 1px solid var(--line);
   display: flex;
   gap: 24px;
-  margin-bottom: 27px;
+  margin-bottom: 0;
 }
 
 .tab {

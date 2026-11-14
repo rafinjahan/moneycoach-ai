@@ -24,6 +24,13 @@ button, input, select {
   font: inherit;
 }
 
+/* Prevent iOS Safari auto-zoom on input/select focus (requires font-size >= 16px) */
+input,
+textarea,
+select {
+  font-size: 16px !important;
+}
+
 button {
   cursor: pointer;
 }
@@ -104,6 +111,7 @@ button {
   color: var(--muted);
   font: 10px "DM Mono";
   margin-top: 5px;
+  white-space: nowrap;
 }
 
 .topbar-actions {
@@ -568,7 +576,8 @@ h2 {
   right: 0;
   width: 100%;
   box-sizing: border-box;
-  padding: 11px max(40px, calc((100% - 440px) / 2)) calc(11px + env(safe-area-inset-bottom, 0px));
+  padding: 11px max(40px, calc((100% - 440px) / 2)) calc(16px + env(safe-area-inset-bottom, 0px));
+  margin-bottom: 0;
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -577,6 +586,12 @@ h2 {
   border-bottom-left-radius: 0;
   border-bottom-right-radius: 0;
   z-index: 100;
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
+
+/* Hide bottom nav when iOS keyboard is open */
+body.keyboard-open .bottom-nav {
+  display: none;
 }
 
 .bottom-tab {

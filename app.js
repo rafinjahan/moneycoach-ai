@@ -1478,6 +1478,20 @@ document.getElementById("chat-form").addEventListener("submit", (event) => {
   input.value = "";
 });
 
+// iOS keyboard open/close — hide bottom nav so it doesn't cover the chat input
+const chatInputEl = document.getElementById("chat-input");
+if (chatInputEl) {
+  chatInputEl.addEventListener("focus", () => {
+    document.body.classList.add("keyboard-open");
+  });
+  chatInputEl.addEventListener("blur", () => {
+    // Small delay so the nav doesn't flicker back before the keyboard fully closes
+    window.setTimeout(() => {
+      document.body.classList.remove("keyboard-open");
+    }, 150);
+  });
+}
+
 // Customer Switcher change
 const customerSelect = document.getElementById("customer-select");
 if (customerSelect) {

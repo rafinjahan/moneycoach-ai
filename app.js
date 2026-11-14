@@ -124,15 +124,41 @@ function addMessage(content, type) {
   message.innerHTML = content;
   container.appendChild(message);
   message.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  return message;
 }
 
-function ask(question) {
+async function ask(question) {
   const trimmed = question.trim();
   if (!trimmed) return;
   addMessage(trimmed, "user");
-  window.setTimeout(() => {
-    addMessage(answerFor(trimmed), "ai");
-  }, 250);
+
+  let apiKey = "";
+  try {
+    apiKey = (localStorage.getItem("oiva_gemini_key") || "").trim();
+  } catch (err) {
+    apiKey = "";
+  }
+
+  // 4. Automatic fallback to local calculation cards when no key is saved
+  if (!apiKey) {
+    window.setTimeout(() => {
+      addMessage(answerFor(trimmed), "ai");
+    }, 250);
+    return;
+  }
+
+  // Gemini API key found in localStorage under 'oiva_gemini_key'
+  const loadingEl = addMessage('<span class="status-dot"></span> <em>Oiva is thinking...</em>', "ai");
+
+  try {
+    const aiResponse = await callGeminiCoach(trimmed, apiKey);
+    loadingEl.innerHTML = aiResponse;
+    loadingEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  } catch (err) {
+    console.warn("Gemini API request failed, falling back to local calculation:", err);
+    loadingEl.innerHTML = answerFor(trimmed);
+    loadingEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
 }
 
 // --------------------------------------------------------------------------
@@ -518,10 +544,10 @@ function answerFor(question) {
     const totalOut = reg + irreg + every + sav;
     return `<strong>Here is where your money goes across the 3 spending baskets:</strong>
 <div class='answer-breakdown'>
-  <div><span>🏠 Regular essentials (Housing & Utilities)</span><b>${formatEur(reg / numMonths)} / mo (${((reg/totalOut)*100).toFixed(0)}%)</b></div>
-  <div><span>🔧 Unexpected necessities (Health, repairs)</span><b>${formatEur(irreg / numMonths)} / mo (${((irreg/totalOut)*100).toFixed(0)}%)</b></div>
-  <div><span>☕ Everyday spending (Discretionary & living)</span><b>${formatEur(every / numMonths)} / mo (${((every/totalOut)*100).toFixed(0)}%)</b></div>
-  <div><span>◌ Savings & Investments</span><b>${formatEur(sav / numMonths)} / mo (${((sav/totalOut)*100).toFixed(0)}%)</b></div>
+  <div><span>🏠 Regular essentials (Housing & Utilities)</span><b>${formatEur(reg / numMonths)} / mo (${((reg / totalOut) * 100).toFixed(0)}%)</b></div>
+  <div><span>🔧 Unexpected necessities (Health, repairs)</span><b>${formatEur(irreg / numMonths)} / mo (${((irreg / totalOut) * 100).toFixed(0)}%)</b></div>
+  <div><span>☕ Everyday spending (Discretionary & living)</span><b>${formatEur(every / numMonths)} / mo (${((every / totalOut) * 100).toFixed(0)}%)</b></div>
+  <div><span>◌ Savings & Investments</span><b>${formatEur(sav / numMonths)} / mo (${((sav / totalOut) * 100).toFixed(0)}%)</b></div>
 </div>
 <div class='answer-note'>Monthly average over ${numMonths} months. Tap any basket in Overview to drill down into individual categories.</div>`;
   }
@@ -577,6 +603,233 @@ function answerFor(question) {
   <div><span>Cash flow breakdown</span><b>“Where did my money go?”</b></div>
 </div>
 <div class='answer-note'>All answers are computed live using your transaction data.</div>`;
+}
+
+// --------------------------------------------------------------------------
+// Gemini REST API Integration & Context Gathering
+// --------------------------------------------------------------------------
+
+// 1. Gather verified financial metrics using existing local calculation functions
+function gatherCustomerFinancialContext(question = "") {
+  const txs = transactionData || [];
+  const profile = customerProfiles.get(currentCustomerId) || {
+    customer_id: currentCustomerId,
+    customer_postal_code: "00990",
+    customer_age: 63
+  };
+
+  // Run existing local calculation functions for active customer
+  const safeData = calculateSafeToSpend(txs);
+  const spenderStyle = calculateSpenderStyle(txs, profile);
+  const months = getCustomerMonths(txs);
+  const numMonths = Math.max(1, months.length);
+
+  // Top spending categories aggregation
+  const categoryTotals = {};
+  txs.forEach((t) => {
+    if (t.tx_amount_eur < 0) {
+      const cat = t.category || "Uncategorized";
+      categoryTotals[cat] = (categoryTotals[cat] || 0) + Math.abs(t.tx_amount_eur);
+    }
+  });
+
+  const topCategories = Object.entries(categoryTotals)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([category, total]) => ({
+      category,
+      monthlyAvg: total / numMonths,
+      totalSpent: total
+    }));
+
+  // Contextual drilldowns if question touches categories or savings
+  const lowerQ = (question || "").toLowerCase();
+  const catKeywords = ["grocer", "restaur", "dining", "food", "transport", "entertain", "health", "hous", "rent", "utilit", "travel", "lifestyl", "shop", "tax", "cab", "uber"];
+  const hasCatQuery = catKeywords.some((k) => lowerQ.includes(k));
+  const categoryTotalsQuery = hasCatQuery ? calculateSpendingTotals(txs, question) : null;
+
+  const hasWhatIfQuery = lowerQ.includes("save") || lowerQ.includes("reduc") || lowerQ.includes("cut") || lowerQ.includes("%");
+  const whatIfSavings = hasWhatIfQuery ? calculateWhatIfSavings(txs, question) : null;
+
+  return {
+    customer: profile,
+    safeData,
+    spenderStyle,
+    topCategories,
+    numMonths,
+    txCount: txs.length,
+    categoryTotalsQuery,
+    whatIfSavings
+  };
+}
+
+// 3. Build Oiva coaching system instruction with verified numbers and calm S-Pankki coaching tone
+function buildOivaSystemInstruction(ctx) {
+  const topCategoriesList = ctx.topCategories
+    .map((c) => `- ${c.category}: €${c.monthlyAvg.toFixed(2)}/mo (total: €${c.totalSpent.toFixed(2)})`)
+    .join("\n");
+
+  let specificDetails = "";
+  if (ctx.categoryTotalsQuery && ctx.categoryTotalsQuery.count > 0) {
+    specificDetails += `\n- Specific Query Category Analysis (${ctx.categoryTotalsQuery.label}):
+  * Total spent: €${ctx.categoryTotalsQuery.totalSpent.toFixed(2)} across ${ctx.categoryTotalsQuery.count} transactions
+  * Monthly average: €${ctx.categoryTotalsQuery.monthlyAvg.toFixed(2)}/mo
+  * Average transaction: €${ctx.categoryTotalsQuery.avgTx.toFixed(2)}
+  * Latest month total: €${ctx.categoryTotalsQuery.latestMonthTotal.toFixed(2)}`;
+  }
+
+  if (ctx.whatIfSavings && ctx.whatIfSavings.txCount > 0) {
+    specificDetails += `\n- What-If Reduction Scenario (${ctx.whatIfSavings.label} by ${ctx.whatIfSavings.percent}%):
+  * Current monthly spend: €${ctx.whatIfSavings.monthlySpend.toFixed(2)}/mo
+  * Monthly savings: €${ctx.whatIfSavings.monthlySavings.toFixed(2)}/mo
+  * 1-Year savings: €${ctx.whatIfSavings.annualSavings.toFixed(2)}
+  * 3-Year savings: €${ctx.whatIfSavings.threeYearSavings.toFixed(2)}`;
+  }
+
+  return `You are Oiva, the financial coach from S-Pankki ("your money, made clear").
+Tone & Persona:
+- Calm, direct, supportive, and practical.
+- Speak in clear, warm Finnish-banking coaching style: reassuring, transparent, and grounded in real customer data.
+- Never judge, scold, or over-promise; help the customer feel confident and in control.
+- CRITICAL GUARDRAIL: DO NOT make up or hallucinate numbers. All amounts, percentages, and timeframes MUST be strictly derived from the verified customer metrics below. If the customer asks for figures outside this dataset, calmly explain what is recorded.
+
+VERIFIED CUSTOMER FINANCIAL METRICS (Active Profile: ${ctx.customer.customer_id}):
+- Demographics: Age ${ctx.customer.customer_age || "—"}, Postal code ${ctx.customer.customer_postal_code || "00990"}
+- Verified Weekly Safe-to-Spend: €${ctx.safeData.weeklySafe.toFixed(2)}
+- Weekly Baseline Breakdown:
+  * Weekly baseline income: €${ctx.safeData.weeklyIncome.toFixed(2)}
+  * Mandatory regular bills: − €${ctx.safeData.weeklyBills.toFixed(2)}
+  * Weekly savings target: − €${ctx.safeData.weeklySavings.toFixed(2)}
+  * Unexpected necessity buffer: − €${ctx.safeData.weeklyIrregularBuffer.toFixed(2)}
+  * Latest account balance: €${ctx.safeData.latestBalance.toFixed(2)}
+  * Calculated across ${ctx.numMonths} months of transactions
+- The 3 Spending Baskets (Monthly Averages):
+  1. Mandatory and regular (Housing, Utilities): €${ctx.spenderStyle.regularSum.toFixed(2)}/mo
+  2. Mandatory and irregular (Health, repairs, home & tech): €${ctx.spenderStyle.irregularSum.toFixed(2)}/mo
+  3. Everyday spending (Groceries, dining, transit & lifestyle): €${ctx.spenderStyle.everydaySum.toFixed(2)}/mo
+  * Savings & Investments: €${ctx.spenderStyle.savingsSum.toFixed(2)}/mo
+- Active Savings Rate: ${ctx.spenderStyle.savingsRate.toFixed(1)}% of total inflows
+- Spender Style Archetype: "${ctx.spenderStyle.archetype}"
+  * Title: ${ctx.spenderStyle.title}
+  * Summary: ${ctx.spenderStyle.description}
+  * Top everyday spending area: ${ctx.spenderStyle.topEveryday ? `${ctx.spenderStyle.topEveryday.name} (€${ctx.spenderStyle.topEveryday.monthly.toFixed(2)}/mo)` : "None"}
+- Top Spending Categories:
+${topCategoriesList || "- None recorded"}${specificDetails}
+
+COACHING RESPONSE FORMAT:
+- Begin directly with the answer to the customer's question in bold (e.g. "<strong>...</strong>").
+- Explain the logic clearly and calmly using the verified numbers above.
+- You may use concise bullet points or HTML breakdown elements (<div class='answer-breakdown'><div><span>Label</span><b>€Value</b></div>...</div>) and coach notes (<div class='answer-note'>...</div>) where helpful.
+- Keep the response concise, uncluttered, and friendly.`;
+}
+
+// Convert markdown/text returned by Gemini into cleanly styled HTML
+function formatAiResponse(text) {
+  if (!text) return "";
+  let formatted = text.trim();
+
+  // Convert markdown bold **text** to <strong>text</strong>
+  formatted = formatted.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>");
+
+  // Convert markdown italic *text* or _text_
+  formatted = formatted.replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, "<em>$1</em>");
+
+  // Process blocks
+  const rawBlocks = formatted.split(/\n\n+/);
+  const renderedBlocks = [];
+
+  rawBlocks.forEach((block) => {
+    const trimmedBlock = block.trim();
+    if (!trimmedBlock) return;
+
+    // Preserve existing HTML blocks directly
+    if (/^<(div|p|ul|ol|table|blockquote)/i.test(trimmedBlock)) {
+      renderedBlocks.push(trimmedBlock);
+      return;
+    }
+
+    const lines = trimmedBlock.split("\n");
+    let listItems = [];
+    let textLines = [];
+
+    const flushList = () => {
+      if (listItems.length) {
+        renderedBlocks.push(`<ul style="margin: 6px 0 8px 18px; padding-left: 0;">${listItems.map((li) => `<li>${li}</li>`).join("")}</ul>`);
+        listItems = [];
+      }
+    };
+
+    const flushText = () => {
+      if (textLines.length) {
+        renderedBlocks.push(`<p style="margin: 0 0 8px 0;">${textLines.join("<br>")}</p>`);
+        textLines = [];
+      }
+    };
+
+    lines.forEach((line) => {
+      const isListItem = /^\s*[-*•]\s+/.test(line);
+      if (isListItem) {
+        flushText();
+        listItems.push(line.replace(/^\s*[-*•]\s+/, "").trim());
+      } else {
+        flushList();
+        textLines.push(line);
+      }
+    });
+
+    flushList();
+    flushText();
+  });
+
+  return renderedBlocks.join("");
+}
+
+// 2. Send POST request to Gemini REST API with active customer context
+async function callGeminiCoach(question, apiKey) {
+  const txs = transactionData || [];
+  if (!txs.length) {
+    return answerFor(question);
+  }
+
+  // 1. Run local calculation functions to gather verified numbers
+  const context = gatherCustomerFinancialContext(question);
+
+  // 3. Pass verified numbers in systemInstruction
+  const systemInstructionText = buildOivaSystemInstruction(context);
+
+  // 2. Send POST request to https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=YOUR_KEY
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(apiKey)}`;
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      systemInstruction: {
+        parts: [{ text: systemInstructionText }]
+      },
+      contents: [
+        {
+          role: "user",
+          parts: [{ text: question }]
+        }
+      ]
+    })
+  });
+
+  if (!response.ok) {
+    const errorDetails = await response.text().catch(() => "");
+    throw new Error(`Gemini API HTTP ${response.status}: ${errorDetails}`);
+  }
+
+  const data = await response.json();
+  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!text) {
+    throw new Error("No text candidate returned by Gemini API");
+  }
+
+  return formatAiResponse(text);
 }
 
 // --------------------------------------------------------------------------

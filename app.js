@@ -1098,7 +1098,24 @@ function answerFor(question) {
 <div class='answer-note'>Mortgage commitments are tracked separately and intentionally excluded from your weekly everyday Safe-to-Spend math.</div>`;
   }
 
-  // 1. Safe to Spend inquiry
+  // 1a. Safe to Save inquiry
+  if (lower.includes("safe to save") || lower.includes("safe-to-save") || (lower.includes("safe") && lower.includes("save") && !lower.includes("spend"))) {
+    const s = calculateSafeToSpend(txs);
+    const style = calculateSpenderStyle(txs, profile);
+    const whatIf20 = calculateDiscretionaryWhatIf(txs, 20);
+    const extraSafeMonthly = Math.max(0, s.monthlyIncome - s.monthlyBills - s.monthlyIrregularBuffer - s.monthlySavings);
+    const suggestedExtraMonthly = Math.min(whatIf20.monthlySavings, extraSafeMonthly > 0 ? extraSafeMonthly : whatIf20.monthlySavings);
+    return `<strong>You currently save ${formatEur(s.monthlySavings)}/mo (${formatEur(s.weeklySavings)}/wk), and can safely add ~${formatEur(suggestedExtraMonthly)}/mo without touching essentials.</strong>
+<div class='answer-breakdown'>
+  <div><span>Current active savings</span><b>${formatEur(s.monthlySavings)} / mo (${style.savingsRate.toFixed(1)}%)</b></div>
+  <div><span>Remaining weekly Safe-to-Spend room</span><b>${formatEur(s.weeklySafe)} / wk</b></div>
+  <div><span>Gentle 20% treat trim boost</span><b>+ ${formatEur(whatIf20.monthlySavings)} / mo</b></div>
+  <div><span>1-year extra savings impact</span><b>${formatEur(whatIf20.oneYearSavings)} / yr</b></div>
+</div>
+<div class='answer-note'>Safe-to-Save keeps fixed bills and your unexpected-necessities buffer protected first.</div>`;
+  }
+
+  // 1b. Safe to Spend inquiry
   if (lower.includes("safe") || lower.includes("spend") && (lower.includes("week") || lower.includes("how did you get") || lower.includes("why is my"))) {
     const s = calculateSafeToSpend(txs);
     const recItemsSummary = s.recurring.items
@@ -1184,10 +1201,14 @@ function answerFor(question) {
       return `<strong>You have no taxi transactions in your loaded records.</strong><div class='answer-note'>Searched for MCC 4121 and taxi merchants.</div>`;
     }
     const maxTrip = t.maxTx ? `${formatEur(Math.abs(t.maxTx.tx_amount_eur))} on ${t.maxTx.tx_date}` : "N/A";
-    return `<strong>Your loaded data shows ${formatEur(t.totalSpent)} across ${t.count} taxi trips.</strong>
+    const asksLatest = lower.includes("last month") || lower.includes("latest month") || lower.includes("this month");
+    const headline = asksLatest
+      ? `<strong>In ${t.latestMonth}, you spent ${formatEur(t.latestMonthTotal)} on taxis (24-mo total ${formatEur(t.totalSpent)}).</strong>`
+      : `<strong>Your loaded data shows ${formatEur(t.totalSpent)} across ${t.count} taxi trips.</strong>`;
+    return `${headline}
 <div class='answer-breakdown'>
-  <div><span>Total taxi spend</span><b>${formatEur(t.totalSpent)}</b></div>
-  <div><span>Total taxi rides</span><b>${t.count} trips</b></div>
+  <div><span>Latest month (${t.latestMonth})</span><b>${formatEur(t.latestMonthTotal)}</b></div>
+  <div><span>Total taxi spend (${t.numMonths} mos)</span><b>${formatEur(t.totalSpent)} (${t.count} trips)</b></div>
   <div><span>Average ride cost</span><b>${formatEur(t.avgTx)}</b></div>
   <div><span>Monthly average</span><b>${formatEur(t.monthlyAvg)} / mo</b></div>
   <div><span>Largest taxi ride</span><b>${maxTrip}</b></div>
@@ -1201,7 +1222,11 @@ function answerFor(question) {
   if (matched) {
     const c = calculateSpendingTotals(txs, matched);
     if (c && c.count > 0) {
-      return `<strong>You spent ${formatEur(c.totalSpent)} on ${c.label} (${c.count} transactions).</strong>
+      const asksLatest = lower.includes("last month") || lower.includes("latest month") || lower.includes("this month");
+      const headline = asksLatest
+        ? `<strong>In ${c.latestMonth}, you spent ${formatEur(c.latestMonthTotal)} on ${c.label} (${formatEur(c.monthlyAvg)}/mo avg).</strong>`
+        : `<strong>You spent ${formatEur(c.totalSpent)} on ${c.label} (${c.count} transactions).</strong>`;
+      return `${headline}
 <div class='answer-breakdown'>
   <div><span>Monthly average</span><b>${formatEur(c.monthlyAvg)} / mo</b></div>
   <div><span>Average transaction</span><b>${formatEur(c.avgTx)}</b></div>

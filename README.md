@@ -32,8 +32,8 @@ Oiva is engineered directly around S-Pankki's five judging pillars (20% weight e
 
 ### 5. Feasibility & Privacy-First Data Architecture (20%)
 - **Two-Tier Data Strategy**:
-  1. **Instant Mobile Boot**: The repository bundles `tx_customers_junction.csv` (5,100 customer demographic profiles) and `tx_junction_transactions.csv` containing a complete **24-month transaction history** (`2024-10-01` to `2026-09-30`, 6,079 rows) for the first 10 synthetic customers (`CUST00001`–`CUST00010`) for sub-second loading on mobile devices.
-  2. **100% Client-Side Full Dataset Processing**: `loadTransactionsCsv()` uses a `ReadableStream` chunk parser with string interning (`intern()`), and the Activity tab's **Load CSV** button (`parseManualCsv()`) processes local CSV uploads—including the full 346 MB Junction synthetic dataset—entirely inside the browser. No transaction records are ever uploaded to an external backend.
+  1. **Production-Realistic Instant Mobile Boot**: Just as S-mobiili only fetches an individual customer's own account history rather than an entire bank ledger, the repository bundles `tx_customers_junction.csv` (5,100 customer demographic profiles) and `tx_junction_transactions.csv` containing a complete **24-month transaction history** (`2024-10-01` to `2026-09-30`, 6,079 rows) for 10 representative synthetic customers (`CUST00001`–`CUST00010`) for sub-second loading on mobile devices.
+  2. **100% Client-Side Streaming & Local CSV Loading**: Initial boot (`loadTransactionsCsv()`) streams transactions using a `ReadableStream` chunk parser with string interning (`intern()`), and the Activity tab's **Load CSV** button (`parseManualCsv()`) processes custom customer subsets, personal exports, or optional mortgage event CSVs locally inside the browser without uploading sensitive financial data to any external backend.
 
 ---
 
@@ -56,7 +56,7 @@ Oiva is engineered directly around S-Pankki's five judging pillars (20% weight e
 3. **Explore "Ask Oiva" (With or Without an API Key)**:
    - **Zero-config mode**: Tap **Ask Oiva** or any insight pill/basket immediately—Oiva answers instantly using its built-in deterministic calculation engine.
    - **Live LLM mode (optional)**: Tap the **key icon** next to the avatar pill in the top header, paste a Gemini API key (saved locally to `localStorage['oiva_gemini_key']` with a green indicator dot), and ask custom follow-up questions powered by `gemini-3.8-flash`.
-4. **Load the Full External Dataset (Optional)**: Open the **Activity** tab, tap **Load CSV**, and select the full multi-million-row Junction synthetic transaction CSV (`tx_junction_transactions.csv`) from disk to parse and switch across all customers locally in your browser.
+4. **Load a Custom or Filtered CSV (Optional)**: Open the **Activity** tab, tap **Load CSV**, and select a customer-filtered transaction CSV, customer metadata CSV, or optional mortgage events CSV from disk to inspect it locally in your browser.
 
 ### Option B: Run Locally
 This project has zero build steps. Serve the repository folder with any static HTTP server (needed so `fetch()` can stream the bundled CSV files):

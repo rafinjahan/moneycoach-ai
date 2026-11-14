@@ -1,4 +1,4 @@
-# Oiva — Personal Economic Trainer for S-mobiili
+# Oiva Personal Economic Trainer for S-mobiili
 
 **Live Demo:** [https://rafinjahan.github.io/moneycoach-ai/](https://rafinjahan.github.io/moneycoach-ai/)
 

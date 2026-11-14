@@ -106,6 +106,13 @@
           <div class="mini-bars" id="insight-bars" aria-label="Everyday spending comparison">
             <!-- Populated dynamically from real monthly data -->
           </div>
+          <button type="button" class="benchmark-pill" id="tilastokeskus-benchmark-pill" data-view-target="chat" data-prompt="How does my spending compare to Statistics Finland peers?">
+            <span class="benchmark-pill-top">
+              <span class="benchmark-tag">Open Data Benchmark (Tilastokeskus)</span>
+              <span class="benchmark-delta" id="benchmark-delta-badge">Loading...</span>
+            </span>
+            <span class="benchmark-detail" id="benchmark-detail-text">Comparing your monthly everyday spend to Finnish age &amp; region peers</span>
+          </button>
         </section>
 
         <section class="spending-section">
@@ -259,6 +266,7 @@
           <p class="eyebrow">TRY ASKING</p>
           <div class="suggestion-row">
             <button data-prompt="What kind of spender am I?">What kind of spender am I?</button>
+            <button data-prompt="How does my spending compare to Statistics Finland peers?">Compare to Finnish peers</button>
             <button data-prompt="What can I safely spend this week?">Safe to spend this week</button>
             <button data-prompt="What are my upcoming recurring bills?">Recurring bills</button>
             <button data-prompt="How much S-Bonus could I earn and invest?">S-Bonus &amp; fund</button>

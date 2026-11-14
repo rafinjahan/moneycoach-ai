@@ -657,6 +657,59 @@ h2 {
   white-space: nowrap;
 }
 
+.benchmark-pill {
+  width: 100%;
+  margin-top: 14px;
+  padding: 10px 12px;
+  border-radius: 11px;
+  border: 1px solid #d5e2d5;
+  background: #f4f8f3;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.benchmark-pill:hover {
+  background: #ebf3ea;
+  border-color: #b7d2b9;
+}
+
+.benchmark-pill-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.benchmark-tag {
+  font: 600 10px "DM Mono";
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--green-dark);
+}
+
+.benchmark-delta {
+  font: 600 10px "DM Mono";
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: #e1efe2;
+  color: var(--green-dark);
+  white-space: nowrap;
+}
+
+.benchmark-delta.above {
+  background: #fff3cc;
+  color: #8c6306;
+}
+
+.benchmark-detail {
+  font-size: 11.5px;
+  color: #46544a;
+  line-height: 1.4;
+}
+
 /* Spending section */
 .spending-section {
   padding-top: 27px;

@@ -6,10 +6,21 @@ const views = ["home", "chat", "activity"];
 // State
 let customerProfiles = new Map();
 let allCustomersMap = new Map();
+let mortgageEventsMap = new Map();
 let currentCustomerId = "CUST00001";
 let transactionData = []; // Active customer's transactions
 let activeFilter = "all";
 let isDataLoaded = false;
+
+// Statistics Finland (Tilastokeskus) Household Consumption Open-Data Benchmarks (EUR/mo everyday spend)
+// Grouped by reference person age bracket and region (Helsinki/Uusimaa postal 00–02 vs Rest of Finland)
+const TILASTOKESKUS_EVERYDAY_BENCHMARKS = [
+  { maxAge: 34, label: "Under 35", uusimaa: 1120, restOfFinland: 940 },
+  { maxAge: 44, label: "35–44", uusimaa: 1380, restOfFinland: 1150 },
+  { maxAge: 54, label: "45–54", uusimaa: 1460, restOfFinland: 1210 },
+  { maxAge: 64, label: "55–64", uusimaa: 1280, restOfFinland: 1060 },
+  { maxAge: Infinity, label: "65+", uusimaa: 1040, restOfFinland: 890 }
+];
 
 // Format currency
 function formatEur(val, includeSign = false) {
@@ -435,6 +446,62 @@ function calculateSBonus(txs) {
   };
 }
 
+// Statistics Finland (Tilastokeskus) Household Benchmark Lookup
+function calculateTilastokeskusBenchmark(txs, profile) {
+  const age = Number(profile?.customer_age) || 45;
+  const postalCode = String(profile?.customer_postal_code || "").trim();
+  const isUusimaa = /^0[0-2]/.test(postalCode);
+  const regionLabel = isUusimaa ? "Helsinki / Uusimaa" : "Rest of Finland";
+
+  const bracket =
+    TILASTOKESKUS_EVERYDAY_BENCHMARKS.find((b) => age <= b.maxAge) ||
+    TILASTOKESKUS_EVERYDAY_BENCHMARKS[TILASTOKESKUS_EVERYDAY_BENCHMARKS.length - 1];
+  const peerMonthlyAvg = isUusimaa ? bracket.uusimaa : bracket.restOfFinland;
+
+  const months = getCustomerMonths(txs);
+  const numMonths = Math.max(1, months.length);
+  const everydayTotal = (txs || []).reduce((sum, t) => {
+    if (t.tx_amount_eur < 0 && getBasket(t) === "everyday") {
+      return sum + Math.abs(t.tx_amount_eur);
+    }
+    return sum;
+  }, 0);
+
+  const customerMonthlyEveryday = everydayTotal / numMonths;
+  const diffEur = customerMonthlyEveryday - peerMonthlyAvg;
+  const diffPct = peerMonthlyAvg > 0 ? (diffEur / peerMonthlyAvg) * 100 : 0;
+
+  return {
+    ageBracket: bracket.label,
+    postalCode: postalCode || "—",
+    isUusimaa,
+    regionLabel,
+    peerMonthlyAvg,
+    customerMonthlyEveryday,
+    diffEur,
+    diffPct
+  };
+}
+
+// Lightweight Mortgage Event Summary (kept separate from weekly everyday Safe-to-Spend math)
+function getCustomerMortgageSummary(customerId) {
+  const events = mortgageEventsMap.get(customerId);
+  if (!events || !events.length) return null;
+
+  const sorted = [...events].sort((a, b) => String(a.event_date || "").localeCompare(String(b.event_date || "")));
+  const latest = sorted[sorted.length - 1];
+
+  return {
+    hasMortgageEvents: true,
+    count: events.length,
+    loanAmount: Number(latest.loan_amount) || 0,
+    propertyType: latest.property_type || "Residential property",
+    lendingDecision: latest.lending_decision || "In review",
+    latestDate: latest.event_date || "",
+    events: sorted
+  };
+}
+
 // Safe to spend calculation
 function calculateSafeToSpend(txs) {
   if (!txs || !txs.length) {
@@ -803,6 +870,45 @@ function answerFor(question) {
 <div class='answer-note'>Redirecting monthly S-Bonus automatically via S-Pankki Säästäjä builds long-term wealth effortlessly without touching your paycheck.</div>`;
   }
 
+  // 0c. Statistics Finland (Tilastokeskus) Peer Benchmark inquiry
+  if (
+    lower.includes("compare") ||
+    lower.includes("peer") ||
+    lower.includes("others") ||
+    lower.includes("tilastokeskus") ||
+    lower.includes("statistics finland") ||
+    lower.includes("benchmark")
+  ) {
+    const bm = calculateTilastokeskusBenchmark(txs, profile);
+    const absPct = Math.abs(bm.diffPct).toFixed(1);
+    const relation = bm.diffEur <= 0 ? `${absPct}% below` : `${absPct}% above`;
+    return `<strong>Your everyday spending (${formatEur(bm.customerMonthlyEveryday)}/mo) is ${relation} the Statistics Finland peer average.</strong>
+<div class='answer-breakdown'>
+  <div><span>Your monthly everyday spend</span><b>${formatEur(bm.customerMonthlyEveryday)} / mo</b></div>
+  <div><span>Tilastokeskus peer avg (${bm.ageBracket})</span><b>${formatEur(bm.peerMonthlyAvg)} / mo</b></div>
+  <div><span>Region</span><b>${bm.regionLabel} (${bm.postalCode})</b></div>
+  <div><span>Monthly difference</span><b>${bm.diffEur >= 0 ? "+" : "−"}${formatEur(Math.abs(bm.diffEur))} / mo</b></div>
+</div>
+<div class='answer-note'>Benchmarked against Statistics Finland (Tilastokeskus) household consumption averages for age ${bm.ageBracket} in ${bm.regionLabel}.</div>`;
+  }
+
+  // 0d. Mortgage application / lending decision awareness
+  if (lower.includes("mortgage") || lower.includes("home loan") || lower.includes("lending decision") || lower.includes("property")) {
+    const mort = getCustomerMortgageSummary(currentCustomerId);
+    if (!mort) {
+      return `<strong>No mortgage application events are recorded for ${profile.customer_id}.</strong>
+<div class='answer-note'>Your weekly Safe-to-Spend (${formatEur(calculateSafeToSpend(txs).weeklySafe)}/wk) is calculated purely from your everyday banking accounts and keeps mortgage data separate.</div>`;
+    }
+    return `<strong>Your mortgage profile shows a ${mort.lendingDecision} decision for a ${formatEur(mort.loanAmount)} loan.</strong>
+<div class='answer-breakdown'>
+  <div><span>Loan amount</span><b>${formatEur(mort.loanAmount)}</b></div>
+  <div><span>Property type</span><b>${mort.propertyType}</b></div>
+  <div><span>Lending decision</span><b>${mort.lendingDecision}</b></div>
+  <div><span>Recorded mortgage events</span><b>${mort.count}</b></div>
+</div>
+<div class='answer-note'>Mortgage commitments are tracked separately and intentionally excluded from your weekly everyday Safe-to-Spend math.</div>`;
+  }
+
   // 1. Safe to Spend inquiry
   if (lower.includes("safe") || lower.includes("spend") && (lower.includes("week") || lower.includes("how did you get") || lower.includes("why is my"))) {
     const s = calculateSafeToSpend(txs);
@@ -1029,6 +1135,8 @@ function gatherCustomerFinancialContext(question = "") {
   const hasWhatIfQuery = lowerQ.includes("save") || lowerQ.includes("reduc") || lowerQ.includes("cut") || lowerQ.includes("trim") || lowerQ.includes("%");
   const whatIfSavings = hasWhatIfQuery ? calculateWhatIfSavings(txs, question) : null;
   const sBonus = calculateSBonus(txs);
+  const tilastokeskusBenchmark = calculateTilastokeskusBenchmark(txs, profile);
+  const mortgageSummary = getCustomerMortgageSummary(currentCustomerId);
 
   return {
     customer: profile,
@@ -1040,7 +1148,9 @@ function gatherCustomerFinancialContext(question = "") {
     categoryTotalsQuery,
     categoryBreakdowns,
     whatIfSavings,
-    sBonus
+    sBonus,
+    tilastokeskusBenchmark,
+    mortgageSummary
   };
 }
 
@@ -1053,6 +1163,15 @@ function buildOivaSystemInstruction(ctx) {
   const recurringList = (ctx.safeData.recurring?.items || [])
     .map((r) => `  * ${r.name} (${r.subtitle}): €${r.monthlyAvg.toFixed(2)}/mo (−€${r.weeklyDeduction.toFixed(2)}/wk)`)
     .join("\n");
+
+  const bm = ctx.tilastokeskusBenchmark;
+  const bmRelation = bm.diffEur <= 0
+    ? `${Math.abs(bm.diffPct).toFixed(1)}% below peers`
+    : `${Math.abs(bm.diffPct).toFixed(1)}% above peers`;
+
+  const mortText = ctx.mortgageSummary
+    ? `  * Active mortgage record found (${ctx.mortgageSummary.count} event(s)): loan_amount €${ctx.mortgageSummary.loanAmount.toFixed(2)}, property_type "${ctx.mortgageSummary.propertyType}", lending_decision "${ctx.mortgageSummary.lendingDecision}". (Note: Kept separate from weekly everyday Safe-to-Spend math.)`
+    : `  * No mortgage application or lending events recorded for this customer. (Weekly Safe-to-Spend remains strictly everyday accounts.)`;
 
   let specificDetails = "";
   const breakdownsToRender = ctx.categoryBreakdowns && ctx.categoryBreakdowns.length
@@ -1102,6 +1221,12 @@ ${recurringList || "  * None detected"}
   * Eligible monthly Groceries + everyday spend: €${ctx.sBonus.eligibleMonthly.toFixed(2)}/mo (${ctx.sBonus.tierPct.toFixed(1)}% S-Bonus tier)
   * Estimated monthly S-Bonus: €${ctx.sBonus.monthlyBonus.toFixed(2)}/mo (€${ctx.sBonus.annualCashBonus.toFixed(2)}/yr cash)
   * 1-Year value if auto-invested in an S-Pankki fund (@ est. 7% p.a.): €${ctx.sBonus.fundOneYear.toFixed(2)} (+€${ctx.sBonus.fundGainOneYear.toFixed(2)} growth)
+- Statistics Finland (Tilastokeskus) Household Benchmark Comparison:
+  * Customer monthly everyday spend: €${bm.customerMonthlyEveryday.toFixed(2)}/mo
+  * Tilastokeskus peer average (Age ${bm.ageBracket}, ${bm.regionLabel}, postal ${bm.postalCode}): €${bm.peerMonthlyAvg.toFixed(2)}/mo
+  * Comparison: ${bmRelation} (${bm.diffEur >= 0 ? "+" : "−"}€${Math.abs(bm.diffEur).toFixed(2)}/mo)
+- Mortgage Event Awareness (Separate from weekly Safe-to-Spend):
+${mortText}
 - The 3 Spending Baskets (Monthly Averages):
   1. Mandatory and regular (Housing, Utilities): €${ctx.spenderStyle.regularSum.toFixed(2)}/mo
   2. Mandatory and irregular (Health, repairs, home & tech): €${ctx.spenderStyle.irregularSum.toFixed(2)}/mo
@@ -1366,6 +1491,9 @@ function updateOverview(txs, profile) {
   // Insight Card: Real 5-month everyday spending mini-bars
   renderInsightBars(txs, months);
 
+  // Open Data Benchmark (Tilastokeskus) pill inside Insight Card
+  renderTilastokeskusBenchmark(txs, profile);
+
   // Upcoming Recurring Bills & Subscriptions inside Safe-to-Spend hero card
   renderRecurringBills(safeData.recurring);
 
@@ -1479,6 +1607,23 @@ function renderSBonusCard(txs) {
       sb.fundGainOneYear > 0
         ? `+${formatEur(sb.fundGainOneYear)} growth @ est. 7% p.a.`
         : "auto-invested via S-Pankki fund";
+  }
+}
+
+function renderTilastokeskusBenchmark(txs, profile) {
+  const bm = calculateTilastokeskusBenchmark(txs, profile);
+  const deltaEl = document.getElementById("benchmark-delta-badge");
+  const detailEl = document.getElementById("benchmark-detail-text");
+
+  if (deltaEl) {
+    const absPct = Math.abs(bm.diffPct).toFixed(0);
+    const isAbove = bm.diffEur > 0;
+    deltaEl.textContent = isAbove ? `${absPct}% above peers` : `${absPct}% below peers`;
+    deltaEl.classList.toggle("above", isAbove);
+  }
+
+  if (detailEl) {
+    detailEl.innerHTML = `Your <strong>${formatEur(bm.customerMonthlyEveryday)}/mo</strong> vs <strong>${formatEur(bm.peerMonthlyAvg)}/mo</strong> Finnish peer avg (${bm.ageBracket} · ${bm.regionLabel})`;
   }
 }
 
@@ -1809,6 +1954,65 @@ async function loadTransactionsCsv() {
   }
 }
 
+// Mortgage Events CSV Loader (optional dataset; kept separate from Safe-to-Spend math)
+function parseMortgageCsv(text) {
+  const clean = text.replace(/^\uFEFF/, "").trim();
+  const lines = clean.split(/\r?\n/);
+  if (lines.length < 2) return 0;
+
+  const headers = lines.shift().split(",").map((h) => h.trim().toLowerCase());
+  const idIdx = headers.indexOf("customer_id");
+  const loanIdx = headers.findIndex((h) => h === "loan_amount" || h === "loan_amount_eur" || h === "amount_eur");
+  const propIdx = headers.findIndex((h) => h === "property_type" || h === "property");
+  const decIdx = headers.findIndex((h) => h === "lending_decision" || h === "decision" || h === "status" || h === "application_status");
+  const dateIdx = headers.findIndex((h) => h === "event_date" || h === "application_date" || h === "date");
+
+  mortgageEventsMap.clear();
+  let count = 0;
+
+  lines.forEach((line) => {
+    if (!line.trim()) return;
+    const parts = line.split(",").map((p) => p.trim());
+    const cid = parts[idIdx >= 0 ? idIdx : 0];
+    if (!cid || cid === "customer_id") return;
+
+    const evt = {
+      customer_id: cid,
+      loan_amount: loanIdx >= 0 ? parseFloat(parts[loanIdx]) || 0 : 0,
+      property_type: propIdx >= 0 ? parts[propIdx] || "Residential" : "Residential",
+      lending_decision: decIdx >= 0 ? parts[decIdx] || "Recorded" : "Recorded",
+      event_date: dateIdx >= 0 ? parts[dateIdx] || "" : ""
+    };
+
+    let list = mortgageEventsMap.get(cid);
+    if (!list) {
+      list = [];
+      mortgageEventsMap.set(cid, list);
+    }
+    list.push(evt);
+    count++;
+  });
+
+  return count;
+}
+
+async function tryLoadMortgageCsv() {
+  const candidates = ["mortgage_events.csv", "tx_mortgage_junction.csv", "mortgage_junction.csv"];
+  for (const filename of candidates) {
+    try {
+      const res = await fetch(filename);
+      if (!res.ok) continue;
+      const text = await res.text();
+      if (text && text.toLowerCase().includes("customer_id")) {
+        parseMortgageCsv(text);
+        return;
+      }
+    } catch (err) {
+      // Optional dataset — ignore if absent
+    }
+  }
+}
+
 // Manual CSV Parser for user uploads
 function parseManualCsv(text) {
   const clean = text.replace(/^\uFEFF/, "").trim();
@@ -1817,6 +2021,7 @@ function parseManualCsv(text) {
 
   const headerLine = lines.shift();
   const headers = headerLine.split(",").map((h) => h.trim());
+  const lowerHeaders = headers.map((h) => h.toLowerCase());
 
   // Check if it's customer CSV
   if (headers.includes("customer_postal_code")) {
@@ -1824,6 +2029,22 @@ function parseManualCsv(text) {
     const statusEl = document.getElementById("data-status");
     if (statusEl) {
       statusEl.innerHTML = `<span class="status-dot"></span> Connected · ${customerProfiles.size} customer profiles loaded`;
+    }
+    renderApp();
+    return;
+  }
+
+  // Check if it's mortgage events CSV
+  if (
+    lowerHeaders.includes("loan_amount") ||
+    lowerHeaders.includes("loan_amount_eur") ||
+    lowerHeaders.includes("property_type") ||
+    lowerHeaders.includes("lending_decision")
+  ) {
+    const count = parseMortgageCsv(text);
+    const statusEl = document.getElementById("data-status");
+    if (statusEl) {
+      statusEl.innerHTML = `<span class="status-dot"></span> Connected · ${count.toLocaleString()} mortgage events loaded (excluded from weekly Safe-to-Spend)`;
     }
     renderApp();
     return;
@@ -2154,6 +2375,7 @@ async function init() {
   syncApiKeyUI();
   showView("home");
   await loadCustomerCsv();
+  await tryLoadMortgageCsv();
   await loadTransactionsCsv();
 }
 

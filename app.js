@@ -12,15 +12,39 @@ let transactionData = []; // Active customer's transactions
 let activeFilter = "all";
 let isDataLoaded = false;
 
-// Statistics Finland (Tilastokeskus) Household Consumption Open-Data Benchmarks (EUR/mo everyday spend)
-// Grouped by reference person age bracket and region (Helsinki/Uusimaa postal 00–02 vs Rest of Finland)
-const TILASTOKESKUS_EVERYDAY_BENCHMARKS = [
-  { maxAge: 34, label: "Under 35", uusimaa: 1120, restOfFinland: 940 },
-  { maxAge: 44, label: "35–44", uusimaa: 1380, restOfFinland: 1150 },
-  { maxAge: 54, label: "45–54", uusimaa: 1460, restOfFinland: 1210 },
-  { maxAge: 64, label: "55–64", uusimaa: 1280, restOfFinland: 1060 },
-  { maxAge: Infinity, label: "65+", uusimaa: 1040, restOfFinland: 890 }
+// Statistics Finland (Tilastokeskus) Household Budget Survey 2022 (StatFin PxWeb API: 14q4 & 14q8)
+// Live API endpoints: https://pxdata.stat.fi/PXWeb/api/v1/en/StatFin/ktutk/{14q4,14q8}.px
+// Metric: kulukk_kt_hk_2_1 (Consumption expenditure per consumption unit at current prices per month, EUR)
+// Everyday COICOP basket: 01 Food + 02 Alcohol/tobacco + 03 Clothing + 072 Vehicle operation + 073 Transit + 09 Recreation + 11 Restaurants/hotels + 13 Personal care/misc
+const STATFIN_KTUTK_BASE = "https://pxdata.stat.fi/PXWeb/api/v1/en/StatFin/ktutk";
+const STATFIN_EVERYDAY_COICOP = ["01", "02", "03", "072", "073", "09", "11", "13"];
+
+// Verified 2022 StatFin snapshot used as instant/offline fallback while live PxWeb fetch resolves
+const TILASTOKESKUS_AGE_BENCHMARKS_2022 = [
+  { code: "17-24", maxAge: 24, label: "17–24", monthlyNational: 638, groceries: 210, restaurants: 75, recreation: 81 },
+  { code: "25-34", maxAge: 34, label: "25–34", monthlyNational: 994, groceries: 292, restaurants: 120, recreation: 143 },
+  { code: "35-44", maxAge: 44, label: "35–44", monthlyNational: 1053, groceries: 332, restaurants: 127, recreation: 139 },
+  { code: "45-54", maxAge: 54, label: "45–54", monthlyNational: 1178, groceries: 346, restaurants: 104, recreation: 185 },
+  { code: "55-64", maxAge: 64, label: "55–64", monthlyNational: 1166, groceries: 360, restaurants: 100, recreation: 177 },
+  { code: "65-74", maxAge: 74, label: "65–74", monthlyNational: 948, groceries: 362, restaurants: 59, recreation: 135 },
+  { code: "75-84", maxAge: 84, label: "75–84", monthlyNational: 826, groceries: 337, restaurants: 42, recreation: 148 },
+  { code: "85-", maxAge: Infinity, label: "85+", monthlyNational: 598, groceries: 276, restaurants: 34, recreation: 84 }
 ];
+const TILASTOKESKUS_REGION_FACTORS_2022 = {
+  SSS: { code: "SSS", label: "Finland avg", monthlyAvg: 1000, multiplier: 1.0 },
+  SA1: { code: "SA1", label: "Helsinki-Uusimaa", monthlyAvg: 1081, multiplier: 1.081 },
+  SA2: { code: "SA2", label: "Southern Finland", monthlyAvg: 1002, multiplier: 1.002 },
+  SA3: { code: "SA3", label: "Western Finland", monthlyAvg: 927, multiplier: 0.927 },
+  SA4: { code: "SA4", label: "N. & E. Finland", monthlyAvg: 963, multiplier: 0.963 },
+  SA5: { code: "SA5", label: "Åland", monthlyAvg: 1178, multiplier: 1.178 }
+};
+
+let tilastokeskusState = {
+  sourceMode: "cached",
+  surveyYear: "2022",
+  ageBenchmarks: TILASTOKESKUS_AGE_BENCHMARKS_2022,
+  regionFactors: TILASTOKESKUS_REGION_FACTORS_2022
+};
 
 // Format currency
 function formatEur(val, includeSign = false) {
@@ -446,17 +470,169 @@ function calculateSBonus(txs) {
   };
 }
 
-// Statistics Finland (Tilastokeskus) Household Benchmark Lookup
+// Live StatFin PxWeb JSON-stat2 Reader & Fetcher (Tables 14q4 & 14q8)
+function getJsonStat2Cell(dataset, coords) {
+  const ids = dataset?.id || [];
+  const sizes = dataset?.size || [];
+  if (!ids.length || ids.length !== sizes.length) return 0;
+
+  let flatIndex = 0;
+  let stride = 1;
+  for (let i = ids.length - 1; i >= 0; i--) {
+    const dimId = ids[i];
+    const code = coords[dimId];
+    const pos = dataset.dimension?.[dimId]?.category?.index?.[code];
+    if (typeof pos !== "number") return 0;
+    flatIndex += pos * stride;
+    stride *= sizes[i];
+  }
+  const raw = dataset.value?.[flatIndex];
+  return typeof raw === "number" ? raw : 0;
+}
+
+async function fetchLiveTilastokeskusBenchmarks() {
+  const query14q4 = {
+    query: [
+      { code: "timeperiod_y", selection: { filter: "all", values: ["*"] } },
+      { code: "coicop_46_20231201", selection: { filter: "item", values: STATFIN_EVERYDAY_COICOP } },
+      { code: "ikaryhma_10_20180101", selection: { filter: "all", values: ["*"] } },
+      { code: "contentscode", selection: { filter: "item", values: ["kulukk_kt_hk_2_1"] } }
+    ],
+    response: { format: "json-stat2" }
+  };
+  const query14q8 = {
+    query: [
+      { code: "timeperiod_y", selection: { filter: "all", values: ["*"] } },
+      { code: "coicop_46_20231201", selection: { filter: "item", values: STATFIN_EVERYDAY_COICOP } },
+      { code: "alue_23_20240101", selection: { filter: "all", values: ["*"] } },
+      { code: "contentscode", selection: { filter: "item", values: ["kulukk_kt_hk_2_1"] } }
+    ],
+    response: { format: "json-stat2" }
+  };
+
+  try {
+    const [res4, res8] = await Promise.all([
+      fetch(`${STATFIN_KTUTK_BASE}/14q4.px`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(query14q4)
+      }),
+      fetch(`${STATFIN_KTUTK_BASE}/14q8.px`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(query14q8)
+      })
+    ]);
+
+    if (!res4.ok || !res8.ok) {
+      throw new Error(`StatFin HTTP ${res4.status}/${res8.status}`);
+    }
+
+    const [data4, data8] = await Promise.all([res4.json(), res8.json()]);
+
+    // Pick latest survey year available across tables
+    const years4 = Object.keys(data4?.dimension?.timeperiod_y?.category?.index || {}).sort();
+    const years8 = Object.keys(data8?.dimension?.timeperiod_y?.category?.index || {}).sort();
+    const latestYear = years4[years4.length - 1] || years8[years8.length - 1] || "2022";
+
+    // Rebuild age benchmarks from live 14q4 response
+    const ageBrackets = TILASTOKESKUS_AGE_BENCHMARKS_2022.map((template) => {
+      let monthlyNational = 0;
+      STATFIN_EVERYDAY_COICOP.forEach((coicop) => {
+        monthlyNational += getJsonStat2Cell(data4, {
+          timeperiod_y: latestYear,
+          coicop_46_20231201: coicop,
+          ikaryhma_10_20180101: template.code,
+          contentscode: "kulukk_kt_hk_2_1"
+        });
+      });
+
+      const groceries = getJsonStat2Cell(data4, {
+        timeperiod_y: latestYear,
+        coicop_46_20231201: "01",
+        ikaryhma_10_20180101: template.code,
+        contentscode: "kulukk_kt_hk_2_1"
+      });
+      const restaurants = getJsonStat2Cell(data4, {
+        timeperiod_y: latestYear,
+        coicop_46_20231201: "11",
+        ikaryhma_10_20180101: template.code,
+        contentscode: "kulukk_kt_hk_2_1"
+      });
+      const recreation = getJsonStat2Cell(data4, {
+        timeperiod_y: latestYear,
+        coicop_46_20231201: "09",
+        ikaryhma_10_20180101: template.code,
+        contentscode: "kulukk_kt_hk_2_1"
+      });
+
+      return monthlyNational > 0
+        ? { ...template, monthlyNational, groceries, restaurants, recreation }
+        : template;
+    });
+
+    // Rebuild regional factors from live 14q8 response
+    const regionSum = (regCode) =>
+      STATFIN_EVERYDAY_COICOP.reduce(
+        (sum, coicop) =>
+          sum +
+          getJsonStat2Cell(data8, {
+            timeperiod_y: latestYear,
+            coicop_46_20231201: coicop,
+            alue_23_20240101: regCode,
+            contentscode: "kulukk_kt_hk_2_1"
+          }),
+        0
+      );
+
+    const sssAvg = regionSum("SSS") || 1000;
+    const regionFactors = {};
+    Object.entries(TILASTOKESKUS_REGION_FACTORS_2022).forEach(([code, meta]) => {
+      const liveSum = regionSum(code);
+      regionFactors[code] = liveSum > 0
+        ? { ...meta, monthlyAvg: liveSum, multiplier: Number((liveSum / sssAvg).toFixed(4)) }
+        : meta;
+    });
+
+    tilastokeskusState = {
+      sourceMode: "live",
+      surveyYear: latestYear,
+      ageBenchmarks: ageBrackets,
+      regionFactors
+    };
+
+    if (transactionData.length > 0) {
+      const profile = customerProfiles.get(currentCustomerId) || {
+        customer_id: currentCustomerId,
+        customer_postal_code: "00990",
+        customer_age: 63
+      };
+      renderTilastokeskusBenchmark(transactionData, profile);
+    }
+  } catch (err) {
+    console.warn("StatFin PxWeb live fetch unavailable, using cached 2022 snapshot:", err);
+  }
+}
+
+// Statistics Finland (Tilastokeskus) Household Budget Survey Lookup (Tables 14q4 & 14q8)
 function calculateTilastokeskusBenchmark(txs, profile) {
   const age = Number(profile?.customer_age) || 45;
   const postalCode = String(profile?.customer_postal_code || "").trim();
-  const isUusimaa = /^0[0-2]/.test(postalCode);
-  const regionLabel = isUusimaa ? "Helsinki / Uusimaa" : "Rest of Finland";
+  const isUusimaa = /^(0[0-46-9]|10)/.test(postalCode);
+  const isAland = /^22/.test(postalCode);
 
-  const bracket =
-    TILASTOKESKUS_EVERYDAY_BENCHMARKS.find((b) => age <= b.maxAge) ||
-    TILASTOKESKUS_EVERYDAY_BENCHMARKS[TILASTOKESKUS_EVERYDAY_BENCHMARKS.length - 1];
-  const peerMonthlyAvg = isUusimaa ? bracket.uusimaa : bracket.restOfFinland;
+  const regions = tilastokeskusState.regionFactors;
+  const region = isUusimaa
+    ? regions.SA1
+    : isAland
+      ? regions.SA5
+      : regions.SSS;
+
+  const brackets = tilastokeskusState.ageBenchmarks;
+  const bracket = brackets.find((b) => age <= b.maxAge) || brackets[brackets.length - 1];
+
+  const nationalAgeAvg = bracket.monthlyNational;
+  const peerMonthlyAvg = Math.round(nationalAgeAvg * region.multiplier);
 
   const months = getCustomerMonths(txs);
   const numMonths = Math.max(1, months.length);
@@ -470,16 +646,26 @@ function calculateTilastokeskusBenchmark(txs, profile) {
   const customerMonthlyEveryday = everydayTotal / numMonths;
   const diffEur = customerMonthlyEveryday - peerMonthlyAvg;
   const diffPct = peerMonthlyAvg > 0 ? (diffEur / peerMonthlyAvg) * 100 : 0;
+  const modeLabel = tilastokeskusState.sourceMode === "live" ? "Live StatFin PxWeb API" : "StatFin 2022 snapshot";
 
   return {
     ageBracket: bracket.label,
     postalCode: postalCode || "—",
     isUusimaa,
-    regionLabel,
+    regionCode: region.code,
+    regionLabel: region.label,
+    regionMultiplier: region.multiplier,
+    nationalAgeAvg,
+    groceriesBenchmark: Math.round(bracket.groceries * region.multiplier),
+    restaurantsBenchmark: Math.round(bracket.restaurants * region.multiplier),
+    recreationBenchmark: Math.round(bracket.recreation * region.multiplier),
     peerMonthlyAvg,
     customerMonthlyEveryday,
     diffEur,
-    diffPct
+    diffPct,
+    surveyYear: tilastokeskusState.surveyYear,
+    sourceMode: tilastokeskusState.sourceMode,
+    sourceCitation: `Tilastokeskus Household Budget Survey ${tilastokeskusState.surveyYear} (${modeLabel} · tables 14q4 & 14q8)`
   };
 }
 
@@ -882,14 +1068,17 @@ function answerFor(question) {
     const bm = calculateTilastokeskusBenchmark(txs, profile);
     const absPct = Math.abs(bm.diffPct).toFixed(1);
     const relation = bm.diffEur <= 0 ? `${absPct}% below` : `${absPct}% above`;
+    const regionNote = bm.regionCode !== "SSS"
+      ? ` (+${((bm.regionMultiplier - 1) * 100).toFixed(1)}% ${bm.regionCode} factor)`
+      : "";
     return `<strong>Your everyday spending (${formatEur(bm.customerMonthlyEveryday)}/mo) is ${relation} the Statistics Finland peer average.</strong>
 <div class='answer-breakdown'>
   <div><span>Your monthly everyday spend</span><b>${formatEur(bm.customerMonthlyEveryday)} / mo</b></div>
-  <div><span>Tilastokeskus peer avg (${bm.ageBracket})</span><b>${formatEur(bm.peerMonthlyAvg)} / mo</b></div>
-  <div><span>Region</span><b>${bm.regionLabel} (${bm.postalCode})</b></div>
+  <div><span>StatFin 14q4 national age ${bm.ageBracket} avg</span><b>${formatEur(bm.nationalAgeAvg)} / mo</b></div>
+  <div><span>Regional peer avg (${bm.regionLabel}${regionNote})</span><b>${formatEur(bm.peerMonthlyAvg)} / mo</b></div>
   <div><span>Monthly difference</span><b>${bm.diffEur >= 0 ? "+" : "−"}${formatEur(Math.abs(bm.diffEur))} / mo</b></div>
 </div>
-<div class='answer-note'>Benchmarked against Statistics Finland (Tilastokeskus) household consumption averages for age ${bm.ageBracket} in ${bm.regionLabel}.</div>`;
+<div class='answer-note'>Source: ${bm.sourceCitation}, per consumption unit (COICOP 01, 02, 03, 072–073, 09, 11, 13).</div>`;
   }
 
   // 0d. Mortgage application / lending decision awareness
@@ -1221,9 +1410,10 @@ ${recurringList || "  * None detected"}
   * Eligible monthly Groceries + everyday spend: €${ctx.sBonus.eligibleMonthly.toFixed(2)}/mo (${ctx.sBonus.tierPct.toFixed(1)}% S-Bonus tier)
   * Estimated monthly S-Bonus: €${ctx.sBonus.monthlyBonus.toFixed(2)}/mo (€${ctx.sBonus.annualCashBonus.toFixed(2)}/yr cash)
   * 1-Year value if auto-invested in an S-Pankki fund (@ est. 7% p.a.): €${ctx.sBonus.fundOneYear.toFixed(2)} (+€${ctx.sBonus.fundGainOneYear.toFixed(2)} growth)
-- Statistics Finland (Tilastokeskus) Household Benchmark Comparison:
+- Statistics Finland (Tilastokeskus) 2022 Household Budget Survey (StatFin 14q4 & 14q8):
   * Customer monthly everyday spend: €${bm.customerMonthlyEveryday.toFixed(2)}/mo
-  * Tilastokeskus peer average (Age ${bm.ageBracket}, ${bm.regionLabel}, postal ${bm.postalCode}): €${bm.peerMonthlyAvg.toFixed(2)}/mo
+  * StatFin 14q4 national age ${bm.ageBracket} avg (per consumption unit): €${bm.nationalAgeAvg.toFixed(2)}/mo (Groceries ~€${bm.groceriesBenchmark}/mo, Restaurants ~€${bm.restaurantsBenchmark}/mo, Recreation ~€${bm.recreationBenchmark}/mo)
+  * Regional peer benchmark (${bm.regionCode} ${bm.regionLabel}, postal ${bm.postalCode}, ${bm.regionMultiplier}x regional index): €${bm.peerMonthlyAvg.toFixed(2)}/mo
   * Comparison: ${bmRelation} (${bm.diffEur >= 0 ? "+" : "−"}€${Math.abs(bm.diffEur).toFixed(2)}/mo)
 - Mortgage Event Awareness (Separate from weekly Safe-to-Spend):
 ${mortText}
@@ -1612,8 +1802,16 @@ function renderSBonusCard(txs) {
 
 function renderTilastokeskusBenchmark(txs, profile) {
   const bm = calculateTilastokeskusBenchmark(txs, profile);
+  const tagEl = document.getElementById("benchmark-source-tag");
   const deltaEl = document.getElementById("benchmark-delta-badge");
   const detailEl = document.getElementById("benchmark-detail-text");
+
+  if (tagEl) {
+    tagEl.textContent =
+      bm.sourceMode === "live"
+        ? `Open Data · Live StatFin API (${bm.surveyYear})`
+        : `Open Data · StatFin ${bm.surveyYear} (cached)`;
+  }
 
   if (deltaEl) {
     const absPct = Math.abs(bm.diffPct).toFixed(0);
@@ -1623,7 +1821,7 @@ function renderTilastokeskusBenchmark(txs, profile) {
   }
 
   if (detailEl) {
-    detailEl.innerHTML = `Your <strong>${formatEur(bm.customerMonthlyEveryday)}/mo</strong> vs <strong>${formatEur(bm.peerMonthlyAvg)}/mo</strong> Finnish peer avg (${bm.ageBracket} · ${bm.regionLabel})`;
+    detailEl.innerHTML = `Your <strong>${formatEur(bm.customerMonthlyEveryday)}/mo</strong> vs <strong>${formatEur(bm.peerMonthlyAvg)}/mo</strong> StatFin ${bm.surveyYear} peer avg (${bm.ageBracket} · ${bm.regionLabel})`;
   }
 }
 
@@ -2374,6 +2572,7 @@ if (loadBtn && fileInput) {
 async function init() {
   syncApiKeyUI();
   showView("home");
+  fetchLiveTilastokeskusBenchmarks(); // Non-blocking live fetch from pxdata.stat.fi (tables 14q4 & 14q8)
   await loadCustomerCsv();
   await tryLoadMortgageCsv();
   await loadTransactionsCsv();

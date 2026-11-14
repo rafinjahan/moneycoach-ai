@@ -350,7 +350,17 @@ function calculateSpendingTotals(txs, categoryQuery = "") {
     } else if (q.includes("grocer") || q.includes("market") || q.includes("supermarket")) {
       filtered = filtered.filter((t) => t.category.toLowerCase().includes("grocer"));
       label = "groceries";
-    } else if (q.includes("rest") || q.includes("dining") || q.includes("eat") || q.includes("food") || q.includes("wolt")) {
+    } else if (
+      q.includes("rest") ||
+      q.includes("dining") ||
+      q.includes("eating out") ||
+      q.includes("eat out") ||
+      q.includes("eat") ||
+      q.includes("food") ||
+      q.includes("takeaway") ||
+      q.includes("delivery") ||
+      q.includes("wolt")
+    ) {
       filtered = filtered.filter((t) => t.category.toLowerCase().includes("rest"));
       label = "restaurants & dining";
     } else if (q.includes("trans")) {
@@ -571,7 +581,7 @@ function answerFor(question) {
   }
 
   // 6. Specific categories (Groceries, Restaurants, Health, Housing, Utilities, Transportation, Travel, Entertainment)
-  const catKeywords = ["grocer", "restaur", "dining", "food", "transport", "entertain", "health", "hous", "rent", "utilit", "travel", "lifestyl", "shop"];
+  const catKeywords = ["grocer", "restaur", "dining", "eating out", "eat out", "food", "takeaway", "delivery", "transport", "entertain", "health", "hous", "rent", "utilit", "travel", "lifestyl", "shop"];
   const matched = catKeywords.find((k) => lower.includes(k));
   if (matched) {
     const c = calculateSpendingTotals(txs, matched);
@@ -644,9 +654,57 @@ function gatherCustomerFinancialContext(question = "") {
 
   // Contextual drilldowns if question touches categories or savings
   const lowerQ = (question || "").toLowerCase();
-  const catKeywords = ["grocer", "restaur", "dining", "food", "transport", "entertain", "health", "hous", "rent", "utilit", "travel", "lifestyl", "shop", "tax", "cab", "uber"];
-  const hasCatQuery = catKeywords.some((k) => lowerQ.includes(k));
-  const categoryTotalsQuery = hasCatQuery ? calculateSpendingTotals(txs, question) : null;
+
+  // Expanded dining keywords: "eating out", "eat out", "food", "takeaway", "delivery", etc.
+  const diningKeywords = ["eating out", "eat out", "food", "takeaway", "delivery", "dining", "restaur", "wolt", "eat"];
+  const isDiningQuery = diningKeywords.some((k) => lowerQ.includes(k));
+  const isGroceriesQuery = lowerQ.includes("grocer") || lowerQ.includes("market") || lowerQ.includes("supermarket");
+
+  const categoryBreakdowns = [];
+
+  // When comparing groceries vs eating out, ensure both categories are gathered
+  if (isGroceriesQuery) {
+    const groc = calculateSpendingTotals(txs, "groceries");
+    if (groc && groc.count > 0) categoryBreakdowns.push(groc);
+  }
+
+  if (isDiningQuery) {
+    const rest = calculateSpendingTotals(txs, "restaurants");
+    if (rest && rest.count > 0 && !categoryBreakdowns.some((b) => b.label === rest.label)) {
+      categoryBreakdowns.push(rest);
+    }
+  }
+
+  // Other category checks
+  const otherCatChecks = [
+    { keys: ["transport"], query: "transportation" },
+    { keys: ["tax", "cab", "uber"], query: "taxi" },
+    { keys: ["entertain"], query: "entertainment" },
+    { keys: ["health", "pharmacy"], query: "health" },
+    { keys: ["hous", "rent"], query: "housing" },
+    { keys: ["utilit", "power", "electric", "bill"], query: "utilities" },
+    { keys: ["travel"], query: "travel" },
+    { keys: ["lifestyl", "shop"], query: "lifestyle" }
+  ];
+
+  otherCatChecks.forEach(({ keys, query }) => {
+    if (keys.some((k) => lowerQ.includes(k))) {
+      const res = calculateSpendingTotals(txs, query);
+      if (res && res.count > 0 && !categoryBreakdowns.some((b) => b.label === res.label)) {
+        categoryBreakdowns.push(res);
+      }
+    }
+  });
+
+  // Fallback to calculateSpendingTotals(txs, question) if none of the specific checks matched
+  if (!categoryBreakdowns.length) {
+    const generalQuery = calculateSpendingTotals(txs, question);
+    if (generalQuery && generalQuery.label !== "all spending" && generalQuery.count > 0) {
+      categoryBreakdowns.push(generalQuery);
+    }
+  }
+
+  const categoryTotalsQuery = categoryBreakdowns[0] || null;
 
   const hasWhatIfQuery = lowerQ.includes("save") || lowerQ.includes("reduc") || lowerQ.includes("cut") || lowerQ.includes("%");
   const whatIfSavings = hasWhatIfQuery ? calculateWhatIfSavings(txs, question) : null;
@@ -659,6 +717,7 @@ function gatherCustomerFinancialContext(question = "") {
     numMonths,
     txCount: txs.length,
     categoryTotalsQuery,
+    categoryBreakdowns,
     whatIfSavings
   };
 }
@@ -670,13 +729,19 @@ function buildOivaSystemInstruction(ctx) {
     .join("\n");
 
   let specificDetails = "";
-  if (ctx.categoryTotalsQuery && ctx.categoryTotalsQuery.count > 0) {
-    specificDetails += `\n- Specific Query Category Analysis (${ctx.categoryTotalsQuery.label}):
-  * Total spent: €${ctx.categoryTotalsQuery.totalSpent.toFixed(2)} across ${ctx.categoryTotalsQuery.count} transactions
-  * Monthly average: €${ctx.categoryTotalsQuery.monthlyAvg.toFixed(2)}/mo
-  * Average transaction: €${ctx.categoryTotalsQuery.avgTx.toFixed(2)}
-  * Latest month total: €${ctx.categoryTotalsQuery.latestMonthTotal.toFixed(2)}`;
-  }
+  const breakdownsToRender = ctx.categoryBreakdowns && ctx.categoryBreakdowns.length
+    ? ctx.categoryBreakdowns
+    : (ctx.categoryTotalsQuery ? [ctx.categoryTotalsQuery] : []);
+
+  breakdownsToRender.forEach((b) => {
+    if (b && b.count > 0) {
+      specificDetails += `\n- Specific Query Category Analysis (${b.label}):
+  * Total spent: €${b.totalSpent.toFixed(2)} across ${b.count} transactions
+  * Monthly average: €${b.monthlyAvg.toFixed(2)}/mo
+  * Average transaction: €${b.avgTx.toFixed(2)}
+  * Latest month total: €${b.latestMonthTotal.toFixed(2)}`;
+    }
+  });
 
   if (ctx.whatIfSavings && ctx.whatIfSavings.txCount > 0) {
     specificDetails += `\n- What-If Reduction Scenario (${ctx.whatIfSavings.label} by ${ctx.whatIfSavings.percent}%):

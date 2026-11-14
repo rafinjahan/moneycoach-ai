@@ -541,17 +541,19 @@ h2 {
 .bottom-nav {
   position: fixed;
   bottom: 0;
-  left: 50%;
-  transform: translateX(-50%);
-  width: min(100%, 520px);
-  height: 73px;
-  padding: 11px 40px 8px;
+  left: 0;
+  right: 0;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 11px max(40px, calc((100% - 440px) / 2)) calc(11px + env(safe-area-inset-bottom, 0px));
   display: flex;
   justify-content: space-between;
-  background: rgba(255, 255, 255, 0.95);
+  align-items: center;
+  background: #ffffff;
   border-top: 1px solid var(--line);
-  backdrop-filter: blur(12px);
-  z-index: 10;
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+  z-index: 100;
 }
 
 .bottom-tab {
@@ -879,7 +881,10 @@ h2 {
   }
 
   .bottom-nav {
-    bottom: 24px;
-    border-radius: 0 0 24px 24px;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
   }
 }

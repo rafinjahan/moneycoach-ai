@@ -2460,8 +2460,20 @@ if (closeApiModalBtn) {
   closeApiModalBtn.addEventListener("click", closeApiKeyModal);
 }
 if (apiKeyModal) {
+  let backdropPressStarted = false;
+  const modalCard = apiKeyModal.querySelector(".api-modal-card");
+  if (modalCard) {
+    modalCard.addEventListener("pointerdown", (e) => e.stopPropagation());
+    modalCard.addEventListener("click", (e) => e.stopPropagation());
+  }
+  apiKeyModal.addEventListener("pointerdown", (e) => {
+    backdropPressStarted = e.target === apiKeyModal;
+  });
   apiKeyModal.addEventListener("click", (e) => {
-    if (e.target === apiKeyModal) closeApiKeyModal();
+    if (e.target === apiKeyModal && backdropPressStarted) {
+      closeApiKeyModal();
+    }
+    backdropPressStarted = false;
   });
 }
 if (toggleApiVisBtn && apiKeyInput) {
@@ -2520,19 +2532,19 @@ document.getElementById("chat-form").addEventListener("submit", (event) => {
   input.value = "";
 });
 
-// iOS keyboard open/close — hide bottom nav so it doesn't cover text inputs
-[document.getElementById("chat-input"), apiKeyInput].forEach((inputEl) => {
-  if (!inputEl) return;
-  inputEl.addEventListener("focus", () => {
+// iOS keyboard open/close — hide bottom nav so it doesn't cover chat input
+const chatInputEl = document.getElementById("chat-input");
+if (chatInputEl) {
+  chatInputEl.addEventListener("focus", () => {
     document.body.classList.add("keyboard-open");
   });
-  inputEl.addEventListener("blur", () => {
+  chatInputEl.addEventListener("blur", () => {
     // Small delay so the nav doesn't flicker back before the keyboard fully closes
     window.setTimeout(() => {
       document.body.classList.remove("keyboard-open");
     }, 150);
   });
-});
+}
 
 // Customer Switcher change
 const customerSelect = document.getElementById("customer-select");

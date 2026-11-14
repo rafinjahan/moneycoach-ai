@@ -1372,13 +1372,10 @@ body.keyboard-open .bottom-nav {
   background: rgba(23, 33, 27, 0.45);
   backdrop-filter: blur(4px);
   display: grid;
-  place-items: center;
-  padding: 20px;
-}
-
-body.keyboard-open .modal-backdrop {
+  justify-items: center;
   align-items: start;
-  padding-top: 72px;
+  padding: clamp(72px, 14vh, 140px) 20px 24px;
+  overflow-y: auto;
 }
 
 .api-modal-card {

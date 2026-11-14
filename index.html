@@ -24,10 +24,18 @@
           <div class="customer-picker">
             <label for="customer-select" class="sr-only">Customer Profile</label>
             <select id="customer-select" class="customer-select" aria-label="Customer Profile">
-              <option value="CUST00001">CUST00001</option>
+              <option value="CUST00001">CUST00001 · Age 63</option>
             </select>
           </div>
-          <button class="avatar" id="user-avatar" aria-label="Open profile">C1</button>
+          <button type="button" class="key-button" id="api-key-btn" aria-label="Gemini API key settings" title="Gemini API key settings">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="7.5" cy="15.5" r="5.5"></circle>
+              <path d="m21 2-9.6 9.6"></path>
+              <path d="m15.5 7.5 3 3L22 7l-3-3"></path>
+            </svg>
+            <span class="key-status-dot" id="api-key-dot" hidden></span>
+          </button>
+          <button type="button" class="avatar" id="user-avatar" aria-label="Customer profile">C1</button>
         </div>
       </header>
 
@@ -50,20 +58,38 @@
         </div>
 
         <section class="hero-card">
-          <div class="hero-copy">
-            <p class="eyebrow light">SAFE TO SPEND · THIS WEEK</p>
-            <div class="hero-amount" id="hero-safe-amount">€264<span>.78</span></div>
-            <p class="hero-description" id="hero-description">after mandatory bills, savings goals, and upcoming commitments</p>
-            <button class="text-button light-button" id="hero-explain-btn" data-view-target="chat" data-prompt="Why is my safe-to-spend €264.78?">
-              How did you get this? <span>→</span>
-            </button>
-          </div>
-          <div class="ring-wrap">
-            <div class="progress-ring" id="hero-progress-ring">
-              <div class="ring-center">
-                <strong id="hero-ring-percent">72%</strong>
-                <small id="hero-ring-label">safe buffer</small>
+          <div class="hero-main">
+            <div class="hero-copy">
+              <p class="eyebrow light">SAFE TO SPEND · THIS WEEK</p>
+              <div class="hero-amount" id="hero-safe-amount">€264<span>.78</span></div>
+              <p class="hero-description" id="hero-description">after mandatory bills, savings goals, and upcoming commitments</p>
+              <button type="button" class="text-button light-button" id="hero-explain-btn" data-view-target="chat" data-prompt="Why is my safe-to-spend €264.78?">
+                How did you get this? <span>→</span>
+              </button>
+            </div>
+            <div class="ring-wrap">
+              <div class="progress-ring" id="hero-progress-ring">
+                <div class="ring-center">
+                  <strong id="hero-ring-percent">72%</strong>
+                  <small id="hero-ring-label">safe buffer</small>
+                </div>
               </div>
+            </div>
+          </div>
+
+          <div class="hero-recurring-wrap">
+            <button type="button" class="recurring-pill-btn" id="recurring-bills-toggle" aria-expanded="false" aria-controls="recurring-bills-list">
+              <span class="recurring-pill-left">
+                <span class="recurring-dot"></span>
+                <span id="recurring-pill-label">Upcoming recurring bills (0)</span>
+              </span>
+              <span class="recurring-pill-right">
+                <strong id="recurring-pill-total">−€0.00/wk</strong>
+                <span class="recurring-chevron" aria-hidden="true">▾</span>
+              </span>
+            </button>
+            <div class="recurring-bills-drawer" id="recurring-bills-list" hidden>
+              <!-- Dynamically populated recurring bills & repeating merchants -->
             </div>
           </div>
         </section>
@@ -127,6 +153,88 @@
             </button>
           </div>
         </section>
+
+        <!-- Interactive What-If Savings Simulator Card -->
+        <section class="simulator-card" aria-labelledby="whatif-heading">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">WHAT-IF SAVINGS SIMULATOR</p>
+              <h2 id="whatif-heading">Trim everyday treats</h2>
+            </div>
+            <span class="sim-percent-pill" id="whatif-percent-badge">20% cut</span>
+          </div>
+          <p class="simulator-sub" id="whatif-baseline-note">
+            Cutting dining, entertainment &amp; lifestyle (avg €338.75/mo)
+          </p>
+
+          <div class="slider-wrap">
+            <input
+              type="range"
+              id="whatif-slider"
+              class="whatif-slider"
+              min="0"
+              max="50"
+              step="1"
+              value="20"
+              aria-label="Cut everyday discretionary spending percentage"
+            />
+            <div class="slider-ticks" aria-hidden="true">
+              <span>0%</span>
+              <span>25%</span>
+              <span>50%</span>
+            </div>
+          </div>
+
+          <div class="whatif-metrics">
+            <div class="whatif-metric">
+              <span class="eyebrow">SAFE-TO-SPEND</span>
+              <strong class="boost-value" id="whatif-weekly-boost">+€15.64/wk</strong>
+            </div>
+            <div class="whatif-metric">
+              <span class="eyebrow">1-YR SAVINGS</span>
+              <strong id="whatif-1yr">€813.00</strong>
+            </div>
+            <div class="whatif-metric">
+              <span class="eyebrow">3-YR SAVINGS</span>
+              <strong id="whatif-3yr">€2,439.00</strong>
+            </div>
+          </div>
+
+          <button type="button" class="text-button sim-action-btn" id="whatif-ask-btn">
+            Ask Oiva how to trim 20% <span>→</span>
+          </button>
+        </section>
+
+        <!-- S-Bonus & S-Group Ecosystem Card -->
+        <section class="sbonus-card" aria-labelledby="sbonus-heading">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow sbonus-eyebrow">S-GROUP ECOSYSTEM · S-BONUS</p>
+              <h2 id="sbonus-heading">S-Bonus &amp; S-Pankki fund</h2>
+            </div>
+            <span class="sbonus-tier-pill" id="sbonus-tier-badge">5.0% tier</span>
+          </div>
+          <p class="sbonus-text" id="sbonus-summary-text">
+            Based on your monthly groceries and everyday purchases, concentrating spend at S-Group earns automatic cashback.
+          </p>
+
+          <div class="sbonus-grid">
+            <div class="sbonus-stat">
+              <span class="eyebrow">EST. MONTHLY S-BONUS</span>
+              <strong id="sbonus-monthly">€54.07/mo</strong>
+              <small id="sbonus-eligible-sub">on €1,081.34/mo eligible</small>
+            </div>
+            <div class="sbonus-stat sbonus-stat-highlight">
+              <span class="eyebrow">1-YR IN S-PANKKI FUND</span>
+              <strong id="sbonus-1yr-fund">€674.05</strong>
+              <small id="sbonus-fund-gain">auto-invested @ est. 7% p.a.</small>
+            </div>
+          </div>
+
+          <button type="button" class="text-button sbonus-ask-btn" id="sbonus-ask-btn">
+            See S-Bonus fund breakdown <span>→</span>
+          </button>
+        </section>
       </section>
 
       <!-- Ask Oiva Chat View -->
@@ -137,7 +245,7 @@
             <p class="eyebrow">YOUR FINANCIAL COACH</p>
             <h1>Ask Oiva <span>✦</span></h1>
           </div>
-          <span class="online-badge"><span class="status-dot"></span> Ready</span>
+          <span class="online-badge" id="chat-engine-badge"><span class="status-dot"></span> <span id="chat-engine-label">Ready</span></span>
         </div>
         <div class="chat-intro">
           <div class="oiva-face">o</div>
@@ -152,7 +260,8 @@
           <div class="suggestion-row">
             <button data-prompt="What kind of spender am I?">What kind of spender am I?</button>
             <button data-prompt="What can I safely spend this week?">Safe to spend this week</button>
-            <button data-prompt="Where did my money go?">Where did my money go?</button>
+            <button data-prompt="What are my upcoming recurring bills?">Recurring bills</button>
+            <button data-prompt="How much S-Bonus could I earn and invest?">S-Bonus &amp; fund</button>
             <button data-prompt="How much could I save if I reduced dining out by 20%?">Reduce dining out by 20%</button>
             <button data-prompt="How much did I spend on taxis?">Taxi spend</button>
           </div>
@@ -215,6 +324,46 @@
         <button class="bottom-tab" data-view="activity"><span>▤</span>Activity</button>
       </footer>
     </main>
+
+    <!-- Compact Gemini API Key Modal -->
+    <div class="modal-backdrop" id="api-key-modal" role="dialog" aria-modal="true" aria-labelledby="api-modal-title" hidden>
+      <div class="api-modal-card">
+        <div class="api-modal-header">
+          <div>
+            <p class="eyebrow">AI COACH ENGINE</p>
+            <h2 id="api-modal-title">Gemini API Key</h2>
+          </div>
+          <button type="button" class="modal-close-btn" id="close-api-modal-btn" aria-label="Close modal">✕</button>
+        </div>
+
+        <div class="api-status-row" id="api-modal-status">
+          <span class="status-dot status-dot-muted" id="api-modal-dot"></span>
+          <span id="api-modal-status-text">Local calculation mode (no API key active)</span>
+        </div>
+
+        <label for="api-key-input" class="sr-only">Gemini API Key</label>
+        <div class="api-input-wrap">
+          <input
+            type="password"
+            id="api-key-input"
+            class="api-key-input"
+            placeholder="Paste Gemini API key (AIza...)"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <button type="button" class="api-visibility-btn" id="toggle-api-key-visibility" aria-label="Show API key">Show</button>
+        </div>
+
+        <div class="api-modal-actions">
+          <button type="button" class="btn-secondary" id="clear-api-key-btn">Clear</button>
+          <button type="button" class="btn-primary" id="save-api-key-btn">Save key</button>
+        </div>
+
+        <p class="api-modal-footnote">
+          Saved locally in <code>oiva_gemini_key</code>. Without a key, Oiva uses deterministic verified math.
+        </p>
+      </div>
+    </div>
 
     <script src="app.js"></script>
   </body>

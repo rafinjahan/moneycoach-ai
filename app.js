@@ -175,6 +175,266 @@ function getCustomerMonths(txs) {
   return Array.from(months).sort();
 }
 
+function formatOrdinalDay(day) {
+  const n = Math.max(1, Math.min(31, Math.round(day || 1)));
+  const mod100 = n % 100;
+  if (mod100 >= 11 && mod100 <= 13) return `${n}th`;
+  switch (n % 10) {
+    case 1: return `${n}st`;
+    case 2: return `${n}nd`;
+    case 3: return `${n}rd`;
+    default: return `${n}th`;
+  }
+}
+
+// Recurring Bills & Subscriptions Detector
+// Scans transaction history for fixed recurring charges (Housing, Utilities) and repeating monthly merchant IDs
+function detectRecurringBills(txs) {
+  const weeksPerMonth = 4.333;
+  if (!txs || !txs.length) {
+    return { items: [], totalMonthly: 0, totalWeekly: 0, numMonths: 1 };
+  }
+
+  const months = getCustomerMonths(txs);
+  const numMonths = Math.max(1, months.length);
+  const items = [];
+
+  const housingTxs = [];
+  const utilityTxs = [];
+  const otherRegularTxs = [];
+  const merchantGroups = new Map();
+
+  txs.forEach((t) => {
+    if (t.tx_amount_eur >= 0) return;
+    const outflow = Math.abs(t.tx_amount_eur);
+    const catLower = (t.category || "").trim().toLowerCase();
+    const typeLower = (t.transaction_type || "").trim().toLowerCase();
+    const basket = getBasket(t);
+
+    if (catLower === "housing" || typeLower === "housing_payment") {
+      housingTxs.push(t);
+    } else if (catLower === "utilities" || typeLower === "utilities_payment") {
+      utilityTxs.push(t);
+    } else if (basket === "mandatory_regular") {
+      otherRegularTxs.push(t);
+    } else if (
+      basket === "everyday" &&
+      t.merchant_id &&
+      !catLower.includes("grocer") &&
+      !catLower.includes("rest")
+    ) {
+      // Candidate recurring subscription / transit pass / membership merchant
+      let entry = merchantGroups.get(t.merchant_id);
+      if (!entry) {
+        entry = {
+          merchantId: t.merchant_id,
+          category: t.category || "Subscription",
+          total: 0,
+          count: 0,
+          months: new Set()
+        };
+        merchantGroups.set(t.merchant_id, entry);
+      }
+      entry.total += outflow;
+      entry.count += 1;
+      if (t.tx_date && t.tx_date.length >= 7) {
+        entry.months.add(t.tx_date.substring(0, 7));
+      }
+    }
+  });
+
+  if (housingTxs.length > 0) {
+    const sum = housingTxs.reduce((acc, t) => acc + Math.abs(t.tx_amount_eur), 0);
+    const days = housingTxs
+      .map((t) => parseInt((t.tx_date || "").slice(8, 10), 10))
+      .filter((d) => !isNaN(d))
+      .sort((a, b) => a - b);
+    const medianDay = days.length ? days[Math.floor(days.length / 2)] : 5;
+    const monthlyAvg = sum / numMonths;
+    items.push({
+      id: "housing",
+      name: "Housing & rent",
+      subtitle: `Monthly · ~${formatOrdinalDay(medianDay)} of mo`,
+      monthlyAvg,
+      weeklyDeduction: monthlyAvg / weeksPerMonth
+    });
+  }
+
+  if (utilityTxs.length > 0) {
+    const sum = utilityTxs.reduce((acc, t) => acc + Math.abs(t.tx_amount_eur), 0);
+    const billsPerMo = Math.max(1, Math.round(utilityTxs.length / numMonths));
+    const monthlyAvg = sum / numMonths;
+    items.push({
+      id: "utilities",
+      name: "Utilities & telecom",
+      subtitle: billsPerMo > 1 ? `~${billsPerMo} recurring bills/mo` : "Monthly recurring bill",
+      monthlyAvg,
+      weeklyDeduction: monthlyAvg / weeksPerMonth
+    });
+  }
+
+  if (otherRegularTxs.length > 0) {
+    const sum = otherRegularTxs.reduce((acc, t) => acc + Math.abs(t.tx_amount_eur), 0);
+    const monthlyAvg = sum / numMonths;
+    items.push({
+      id: "other_regular",
+      name: "Fixed essentials",
+      subtitle: "Recurring obligations",
+      monthlyAvg,
+      weeklyDeduction: monthlyAvg / weeksPerMonth
+    });
+  }
+
+  // Detect repeating monthly merchant subscriptions (>= 3 distinct months, or >= 2 on short histories)
+  const minDistinctMonths = numMonths >= 6 ? 3 : Math.min(2, numMonths);
+  const recurringMerchants = Array.from(merchantGroups.values())
+    .filter((m) => m.months.size >= minDistinctMonths)
+    .sort((a, b) => b.months.size - a.months.size || b.total - a.total)
+    .slice(0, 3);
+
+  recurringMerchants.forEach((m) => {
+    const monthlyAvg = m.total / numMonths;
+    const avgCharge = m.total / Math.max(1, m.count);
+    items.push({
+      id: m.merchantId,
+      name: `${m.merchantId} · ${m.category}`,
+      subtitle: `Repeats (${m.months.size} mos) · avg ${formatEur(avgCharge)}`,
+      monthlyAvg,
+      weeklyDeduction: monthlyAvg / weeksPerMonth
+    });
+  });
+
+  const totalMonthly = items.reduce((acc, item) => acc + item.monthlyAvg, 0);
+  const totalWeekly = totalMonthly / weeksPerMonth;
+
+  return {
+    items,
+    totalMonthly,
+    totalWeekly,
+    numMonths
+  };
+}
+
+// Interactive What-If Discretionary Simulator (dining, entertainment, lifestyle)
+function calculateDiscretionaryWhatIf(txs, percent = 20) {
+  const weeksPerMonth = 4.333;
+  if (!txs || !txs.length) {
+    return {
+      percent,
+      monthlyBaseline: 0,
+      monthlySavings: 0,
+      weeklyBoost: 0,
+      oneYearSavings: 0,
+      threeYearSavings: 0,
+      txCount: 0
+    };
+  }
+
+  const months = getCustomerMonths(txs);
+  const numMonths = Math.max(1, months.length);
+
+  let discretionaryTxs = txs.filter((t) => {
+    if (t.tx_amount_eur >= 0) return false;
+    const cat = (t.category || "").trim().toLowerCase();
+    return cat.includes("rest") || cat.includes("dining") || cat.includes("entertain") || cat.includes("lifestyl");
+  });
+
+  if (!discretionaryTxs.length) {
+    discretionaryTxs = txs.filter((t) => t.tx_amount_eur < 0 && getBasket(t) === "everyday");
+  }
+
+  const totalDiscretionary = discretionaryTxs.reduce((sum, t) => sum + Math.abs(t.tx_amount_eur), 0);
+  const monthlyBaseline = totalDiscretionary / numMonths;
+  const clampedPct = Math.max(0, Math.min(50, Number(percent) || 0));
+  const monthlySavings = monthlyBaseline * (clampedPct / 100);
+  const weeklyBoost = monthlySavings / weeksPerMonth;
+  const oneYearSavings = monthlySavings * 12;
+  const threeYearSavings = oneYearSavings * 3;
+
+  return {
+    percent: clampedPct,
+    monthlyBaseline,
+    monthlySavings,
+    weeklyBoost,
+    oneYearSavings,
+    threeYearSavings,
+    txCount: discretionaryTxs.length
+  };
+}
+
+// S-Bonus & S-Group Ecosystem Calculator (progressive S-Group bonus up to 5% + S-Pankki fund projection)
+function getSBonusTierRate(monthlyEligibleEur) {
+  if (monthlyEligibleEur >= 900) return 5.0;
+  if (monthlyEligibleEur >= 800) return 4.5;
+  if (monthlyEligibleEur >= 700) return 4.0;
+  if (monthlyEligibleEur >= 600) return 3.5;
+  if (monthlyEligibleEur >= 500) return 3.0;
+  if (monthlyEligibleEur >= 400) return 2.5;
+  if (monthlyEligibleEur >= 300) return 2.0;
+  if (monthlyEligibleEur >= 200) return 1.5;
+  if (monthlyEligibleEur >= 50) return 1.0;
+  return 0.0;
+}
+
+function calculateSBonus(txs) {
+  if (!txs || !txs.length) {
+    return {
+      monthlyGroceries: 0,
+      monthlyOtherEveryday: 0,
+      eligibleMonthly: 0,
+      tierPct: 0,
+      monthlyBonus: 0,
+      annualCashBonus: 0,
+      fundOneYear: 0,
+      fundGainOneYear: 0
+    };
+  }
+
+  const months = getCustomerMonths(txs);
+  const numMonths = Math.max(1, months.length);
+
+  let groceriesTotal = 0;
+  let otherEverydayTotal = 0;
+
+  txs.forEach((t) => {
+    if (t.tx_amount_eur >= 0) return;
+    if (getBasket(t) !== "everyday") return;
+    const outflow = Math.abs(t.tx_amount_eur);
+    const cat = (t.category || "").toLowerCase();
+    if (cat.includes("grocer")) {
+      groceriesTotal += outflow;
+    } else {
+      otherEverydayTotal += outflow;
+    }
+  });
+
+  const monthlyGroceries = groceriesTotal / numMonths;
+  const monthlyOtherEveryday = otherEverydayTotal / numMonths;
+  const eligibleMonthly = monthlyGroceries + monthlyOtherEveryday;
+  const tierPct = getSBonusTierRate(eligibleMonthly);
+  const monthlyBonus = eligibleMonthly * (tierPct / 100);
+  const annualCashBonus = monthlyBonus * 12;
+
+  // Monthly auto-investing into an S-Pankki fund @ 7% expected annual return
+  const monthlyReturn = 0.07 / 12;
+  const fundOneYear =
+    monthlyBonus > 0
+      ? monthlyBonus * (((Math.pow(1 + monthlyReturn, 12) - 1) / monthlyReturn) * (1 + monthlyReturn))
+      : 0;
+  const fundGainOneYear = Math.max(0, fundOneYear - annualCashBonus);
+
+  return {
+    monthlyGroceries,
+    monthlyOtherEveryday,
+    eligibleMonthly,
+    tierPct,
+    monthlyBonus,
+    annualCashBonus,
+    fundOneYear,
+    fundGainOneYear
+  };
+}
+
 // Safe to spend calculation
 function calculateSafeToSpend(txs) {
   if (!txs || !txs.length) {
@@ -189,7 +449,8 @@ function calculateSafeToSpend(txs) {
       monthlySavings: 0,
       monthlyIrregularBuffer: 0,
       latestBalance: 0,
-      numMonths: 1
+      numMonths: 1,
+      recurring: { items: [], totalMonthly: 0, totalWeekly: 0, numMonths: 1 }
     };
   }
 
@@ -197,7 +458,6 @@ function calculateSafeToSpend(txs) {
   const numMonths = Math.max(1, months.length);
 
   let totalInflows = 0;
-  let totalRegularBills = 0;
   let totalIrregularNecessities = 0;
   let totalSavings = 0;
 
@@ -208,9 +468,7 @@ function calculateSafeToSpend(txs) {
       totalInflows += amt;
     } else if (amt < 0) {
       const outflow = Math.abs(amt);
-      if (basket === "mandatory_regular") {
-        totalRegularBills += outflow;
-      } else if (basket === "mandatory_irregular") {
+      if (basket === "mandatory_irregular") {
         totalIrregularNecessities += outflow;
       } else if (basket === "savings") {
         totalSavings += outflow;
@@ -218,15 +476,17 @@ function calculateSafeToSpend(txs) {
     }
   });
 
+  const recurring = detectRecurringBills(txs);
+
   const monthlyIncome = totalInflows / numMonths;
-  const monthlyBills = totalRegularBills / numMonths;
+  const monthlyBills = recurring.totalMonthly;
   const monthlyIrregularBuffer = totalIrregularNecessities / numMonths;
   const monthlySavings = totalSavings / numMonths;
 
   // 52 weeks / 12 months = 4.333 weeks per month
   const weeksPerMonth = 4.333;
   const weeklyIncome = monthlyIncome / weeksPerMonth;
-  const weeklyBills = monthlyBills / weeksPerMonth;
+  const weeklyBills = recurring.totalWeekly;
   const weeklySavings = monthlySavings / weeksPerMonth;
   const weeklyIrregularBuffer = monthlyIrregularBuffer / weeksPerMonth;
 
@@ -248,7 +508,8 @@ function calculateSafeToSpend(txs) {
     monthlySavings,
     monthlyIrregularBuffer,
     latestBalance,
-    numMonths
+    numMonths,
+    recurring
   };
 }
 
@@ -429,6 +690,25 @@ function calculateWhatIfSavings(txs, query) {
 
   // Target category
   const q = query.toLowerCase();
+
+  // Combined discretionary everyday treats (dining, entertainment, lifestyle)
+  if (
+    (q.includes("everyday") || q.includes("treat") || q.includes("discretionary")) ||
+    (q.includes("dining") && q.includes("entertain"))
+  ) {
+    const sim = calculateDiscretionaryWhatIf(txs, percent);
+    return {
+      label: "everyday treats (dining, entertainment & lifestyle)",
+      percent: sim.percent,
+      monthlySpend: sim.monthlyBaseline,
+      monthlySavings: sim.monthlySavings,
+      weeklyBoost: sim.weeklyBoost,
+      annualSavings: sim.oneYearSavings,
+      threeYearSavings: sim.threeYearSavings,
+      txCount: sim.txCount
+    };
+  }
+
   let targetCat = "Restaurants";
   let label = "dining out";
 
@@ -438,6 +718,9 @@ function calculateWhatIfSavings(txs, query) {
   } else if (q.includes("entertain")) {
     targetCat = "Entertainment";
     label = "entertainment";
+  } else if (q.includes("lifestyl")) {
+    targetCat = "Lifestyle";
+    label = "lifestyle";
   } else if (q.includes("taxi")) {
     targetCat = "Taxi";
     label = "taxis";
@@ -459,6 +742,7 @@ function calculateWhatIfSavings(txs, query) {
   const totalSpent = matchingTxs.reduce((sum, t) => sum + Math.abs(t.tx_amount_eur), 0);
   const monthlySpend = totalSpent / numMonths;
   const monthlySavings = monthlySpend * (percent / 100);
+  const weeklyBoost = monthlySavings / 4.333;
   const annualSavings = monthlySavings * 12;
   const threeYearSavings = annualSavings * 3;
 
@@ -467,6 +751,7 @@ function calculateWhatIfSavings(txs, query) {
     percent,
     monthlySpend,
     monthlySavings,
+    weeklyBoost,
     annualSavings,
     threeYearSavings,
     txCount: matchingTxs.length
@@ -490,19 +775,50 @@ function answerFor(question) {
     return "<strong>No transaction data loaded yet.</strong> Please ensure the dataset is loaded or use the Load CSV button to explore your finances.";
   }
 
+  // 0a. Recurring Bills & Subscriptions inquiry
+  if (lower.includes("recurring") || lower.includes("subscription") || lower.includes("upcoming bill")) {
+    const rec = detectRecurringBills(txs);
+    const rowsHtml = rec.items
+      .map((item) => `<div><span>${item.name} <small style="color:#78827b">(${item.subtitle})</small></span><b>− ${formatEur(item.weeklyDeduction)}/wk</b></div>`)
+      .join("");
+    return `<strong>You have ${rec.items.length} recurring bill &amp; subscription streams totaling ${formatEur(rec.totalMonthly)}/mo (−${formatEur(rec.totalWeekly)}/wk).</strong>
+<div class='answer-breakdown'>
+  ${rowsHtml}
+  <div><span><strong>Total deducted from Safe-to-Spend</strong></span><b>− ${formatEur(rec.totalWeekly)}/wk</b></div>
+</div>
+<div class='answer-note'>Detected across ${rec.numMonths} months from fixed housing, utilities, and repeating monthly merchant IDs.</div>`;
+  }
+
+  // 0b. S-Bonus & S-Group Ecosystem inquiry
+  if (lower.includes("s-bonus") || lower.includes("sbonus") || lower.includes("bonus") || lower.includes("s-group") || lower.includes("fund")) {
+    const sb = calculateSBonus(txs);
+    return `<strong>Your monthly everyday purchases can earn an estimated ${formatEur(sb.monthlyBonus)}/mo in S-Bonus (${sb.tierPct.toFixed(1)}% tier).</strong>
+<div class='answer-breakdown'>
+  <div><span>Monthly Groceries</span><b>${formatEur(sb.monthlyGroceries)} / mo</b></div>
+  <div><span>Other everyday purchases</span><b>${formatEur(sb.monthlyOtherEveryday)} / mo</b></div>
+  <div><span>Eligible S-Group monthly total</span><b>${formatEur(sb.eligibleMonthly)} / mo (${sb.tierPct.toFixed(1)}%)</b></div>
+  <div><span>Annual cash S-Bonus</span><b>${formatEur(sb.annualCashBonus)} / yr</b></div>
+  <div><span>1-Year in S-Pankki Fund (est. 7% p.a.)</span><b>${formatEur(sb.fundOneYear)} (+${formatEur(sb.fundGainOneYear)})</b></div>
+</div>
+<div class='answer-note'>Redirecting monthly S-Bonus automatically via S-Pankki Säästäjä builds long-term wealth effortlessly without touching your paycheck.</div>`;
+  }
+
   // 1. Safe to Spend inquiry
   if (lower.includes("safe") || lower.includes("spend") && (lower.includes("week") || lower.includes("how did you get") || lower.includes("why is my"))) {
     const s = calculateSafeToSpend(txs);
+    const recItemsSummary = s.recurring.items
+      .map((item) => `${item.name} (−${formatEur(item.weeklyDeduction)}/wk)`)
+      .join(", ");
     return `<strong>${formatEur(s.weeklySafe)} is safe for you to spend this week.</strong>
 <div class='answer-breakdown'>
   <div><span>Weekly baseline income</span><b>${formatEur(s.weeklyIncome)}</b></div>
-  <div><span>Upcoming mandatory bills</span><b>− ${formatEur(s.weeklyBills)}</b></div>
+  <div><span>Upcoming recurring bills (${s.recurring.items.length})</span><b>− ${formatEur(s.weeklyBills)}</b></div>
   <div><span>Weekly savings target</span><b>− ${formatEur(s.weeklySavings)}</b></div>
   <div><span>Buffer for unexpected necessities</span><b>− ${formatEur(s.weeklyIrregularBuffer)}</b></div>
   <div><span>Safe to spend per week</span><b>${formatEur(s.weeklySafe)}</b></div>
   <div><span>Current account balance</span><b>${formatEur(s.latestBalance)}</b></div>
 </div>
-<div class='answer-note'>Calculated across ${s.numMonths} months of real data. Leaving a buffer prevents unexpected costs from turning into stress.</div>`;
+<div class='answer-note'>Recurring deductions include: ${recItemsSummary || "fixed essentials"}. Calculated across ${s.numMonths} months of real data.</div>`;
   }
 
   // 2. Spender Style inquiry
@@ -523,16 +839,20 @@ function answerFor(question) {
   }
 
   // 3. What-if savings scenarios
-  if (lower.includes("save") && (lower.includes("reduc") || lower.includes("cut") || lower.includes("trim") || lower.includes("if i") || lower.includes("could i") || lower.includes("%"))) {
+  if (
+    (lower.includes("save") || lower.includes("trim") || lower.includes("cut") || lower.includes("reduc")) &&
+    (lower.includes("reduc") || lower.includes("cut") || lower.includes("trim") || lower.includes("if i") || lower.includes("could i") || lower.includes("%"))
+  ) {
     const whatIf = calculateWhatIfSavings(txs, lower);
-    return `<strong>Reducing ${whatIf.label} by ${whatIf.percent}% saves you ${formatEur(whatIf.monthlySavings)} per month.</strong>
+    return `<strong>Trimming ${whatIf.label} by ${whatIf.percent}% boosts your weekly Safe-to-Spend by +${formatEur(whatIf.weeklyBoost)}/wk (${formatEur(whatIf.monthlySavings)}/mo).</strong>
 <div class='answer-breakdown'>
-  <div><span>Typical ${whatIf.label} spend</span><b>${formatEur(whatIf.monthlySpend)} / mo</b></div>
-  <div><span>${whatIf.percent}% monthly reduction</span><b>${formatEur(whatIf.monthlySavings)} / mo</b></div>
+  <div><span>Typical ${whatIf.label}</span><b>${formatEur(whatIf.monthlySpend)} / mo</b></div>
+  <div><span>Weekly Safe-to-Spend boost</span><b>+ ${formatEur(whatIf.weeklyBoost)} / wk</b></div>
+  <div><span>${whatIf.percent}% monthly savings</span><b>${formatEur(whatIf.monthlySavings)} / mo</b></div>
   <div><span>Savings over 1 year</span><b>${formatEur(whatIf.annualSavings)} / yr</b></div>
   <div><span>Savings over 3 years</span><b>${formatEur(whatIf.threeYearSavings)}</b></div>
 </div>
-<div class='answer-note'>Based on ${whatIf.txCount} transactions in your dataset. Redirecting this into savings builds a resilient cushion without touching essential needs.</div>`;
+<div class='answer-note'>Based on ${whatIf.txCount} verified transactions. Small, steady swaps keep your lifestyle enjoyable while growing your cushion.</div>`;
   }
 
   // 4. Where did my money go / general spending breakdown
@@ -706,8 +1026,9 @@ function gatherCustomerFinancialContext(question = "") {
 
   const categoryTotalsQuery = categoryBreakdowns[0] || null;
 
-  const hasWhatIfQuery = lowerQ.includes("save") || lowerQ.includes("reduc") || lowerQ.includes("cut") || lowerQ.includes("%");
+  const hasWhatIfQuery = lowerQ.includes("save") || lowerQ.includes("reduc") || lowerQ.includes("cut") || lowerQ.includes("trim") || lowerQ.includes("%");
   const whatIfSavings = hasWhatIfQuery ? calculateWhatIfSavings(txs, question) : null;
+  const sBonus = calculateSBonus(txs);
 
   return {
     customer: profile,
@@ -718,7 +1039,8 @@ function gatherCustomerFinancialContext(question = "") {
     txCount: txs.length,
     categoryTotalsQuery,
     categoryBreakdowns,
-    whatIfSavings
+    whatIfSavings,
+    sBonus
   };
 }
 
@@ -726,6 +1048,10 @@ function gatherCustomerFinancialContext(question = "") {
 function buildOivaSystemInstruction(ctx) {
   const topCategoriesList = ctx.topCategories
     .map((c) => `- ${c.category}: €${c.monthlyAvg.toFixed(2)}/mo (total: €${c.totalSpent.toFixed(2)})`)
+    .join("\n");
+
+  const recurringList = (ctx.safeData.recurring?.items || [])
+    .map((r) => `  * ${r.name} (${r.subtitle}): €${r.monthlyAvg.toFixed(2)}/mo (−€${r.weeklyDeduction.toFixed(2)}/wk)`)
     .join("\n");
 
   let specificDetails = "";
@@ -746,6 +1072,7 @@ function buildOivaSystemInstruction(ctx) {
   if (ctx.whatIfSavings && ctx.whatIfSavings.txCount > 0) {
     specificDetails += `\n- What-If Reduction Scenario (${ctx.whatIfSavings.label} by ${ctx.whatIfSavings.percent}%):
   * Current monthly spend: €${ctx.whatIfSavings.monthlySpend.toFixed(2)}/mo
+  * Weekly Safe-to-Spend boost: +€${(ctx.whatIfSavings.weeklyBoost || 0).toFixed(2)}/wk
   * Monthly savings: €${ctx.whatIfSavings.monthlySavings.toFixed(2)}/mo
   * 1-Year savings: €${ctx.whatIfSavings.annualSavings.toFixed(2)}
   * 3-Year savings: €${ctx.whatIfSavings.threeYearSavings.toFixed(2)}`;
@@ -763,11 +1090,18 @@ VERIFIED CUSTOMER FINANCIAL METRICS (Active Profile: ${ctx.customer.customer_id}
 - Verified Weekly Safe-to-Spend: €${ctx.safeData.weeklySafe.toFixed(2)}
 - Weekly Baseline Breakdown:
   * Weekly baseline income: €${ctx.safeData.weeklyIncome.toFixed(2)}
-  * Mandatory regular bills: − €${ctx.safeData.weeklyBills.toFixed(2)}
+  * Upcoming recurring bills & subscriptions: − €${ctx.safeData.weeklyBills.toFixed(2)}
   * Weekly savings target: − €${ctx.safeData.weeklySavings.toFixed(2)}
   * Unexpected necessity buffer: − €${ctx.safeData.weeklyIrregularBuffer.toFixed(2)}
   * Latest account balance: €${ctx.safeData.latestBalance.toFixed(2)}
   * Calculated across ${ctx.numMonths} months of transactions
+- Detected Recurring Bills & Subscriptions:
+${recurringList || "  * None detected"}
+- S-Bonus & S-Group Ecosystem Estimate:
+  * Monthly Groceries: €${ctx.sBonus.monthlyGroceries.toFixed(2)}/mo
+  * Eligible monthly Groceries + everyday spend: €${ctx.sBonus.eligibleMonthly.toFixed(2)}/mo (${ctx.sBonus.tierPct.toFixed(1)}% S-Bonus tier)
+  * Estimated monthly S-Bonus: €${ctx.sBonus.monthlyBonus.toFixed(2)}/mo (€${ctx.sBonus.annualCashBonus.toFixed(2)}/yr cash)
+  * 1-Year value if auto-invested in an S-Pankki fund (@ est. 7% p.a.): €${ctx.sBonus.fundOneYear.toFixed(2)} (+€${ctx.sBonus.fundGainOneYear.toFixed(2)} growth)
 - The 3 Spending Baskets (Monthly Averages):
   1. Mandatory and regular (Housing, Utilities): €${ctx.spenderStyle.regularSum.toFixed(2)}/mo
   2. Mandatory and irregular (Health, repairs, home & tech): €${ctx.spenderStyle.irregularSum.toFixed(2)}/mo
@@ -1031,6 +1365,121 @@ function updateOverview(txs, profile) {
 
   // Insight Card: Real 5-month everyday spending mini-bars
   renderInsightBars(txs, months);
+
+  // Upcoming Recurring Bills & Subscriptions inside Safe-to-Spend hero card
+  renderRecurringBills(safeData.recurring);
+
+  // Interactive What-If Savings Simulator card
+  updateWhatIfSimulator(txs);
+
+  // S-Bonus & S-Group Ecosystem card
+  renderSBonusCard(txs);
+}
+
+function renderRecurringBills(recurring) {
+  const pillLabel = document.getElementById("recurring-pill-label");
+  const pillTotal = document.getElementById("recurring-pill-total");
+  const drawer = document.getElementById("recurring-bills-list");
+
+  const items = recurring?.items || [];
+  if (pillLabel) {
+    pillLabel.textContent = `Upcoming recurring bills (${items.length})`;
+  }
+  if (pillTotal) {
+    pillTotal.textContent = `−${formatEur(recurring?.totalWeekly || 0)}/wk`;
+  }
+  if (!drawer) return;
+
+  if (!items.length) {
+    drawer.innerHTML = `<p class="recurring-drawer-note" style="border-top:0;padding-top:0;">No repeating bills detected in this profile.</p>`;
+    return;
+  }
+
+  const rowsHtml = items
+    .map(
+      (item) => `
+      <div class="recurring-bill-row">
+        <div class="recurring-bill-info">
+          <strong>${item.name}</strong>
+          <small>${item.subtitle}</small>
+        </div>
+        <div class="recurring-bill-amt">
+          <b>−${formatEur(item.weeklyDeduction)}/wk</b>
+          <span>${formatEur(item.monthlyAvg)}/mo</span>
+        </div>
+      </div>`
+    )
+    .join("");
+
+  drawer.innerHTML = `
+    ${rowsHtml}
+    <p class="recurring-drawer-note">Set aside weekly across 4.33 wks/mo so upcoming bills never dent your safe limit.</p>
+  `;
+}
+
+function updateWhatIfSimulator(txs) {
+  const slider = document.getElementById("whatif-slider");
+  if (!slider) return;
+
+  const pct = Number(slider.value) || 0;
+  const fillPct = Math.max(0, Math.min(100, (pct / 50) * 100));
+  slider.style.background = `linear-gradient(90deg, var(--green) 0% ${fillPct}%, #dfe7df ${fillPct}% 100%)`;
+
+  const sim = calculateDiscretionaryWhatIf(txs, pct);
+
+  const badgeEl = document.getElementById("whatif-percent-badge");
+  if (badgeEl) badgeEl.textContent = `${pct}% cut`;
+
+  const baselineEl = document.getElementById("whatif-baseline-note");
+  if (baselineEl) {
+    baselineEl.textContent = `Cutting dining, entertainment & lifestyle (avg ${formatEur(sim.monthlyBaseline)}/mo)`;
+  }
+
+  const boostEl = document.getElementById("whatif-weekly-boost");
+  if (boostEl) boostEl.textContent = `+${formatEur(sim.weeklyBoost)}/wk`;
+
+  const oneYrEl = document.getElementById("whatif-1yr");
+  if (oneYrEl) oneYrEl.textContent = formatEur(sim.oneYearSavings);
+
+  const threeYrEl = document.getElementById("whatif-3yr");
+  if (threeYrEl) threeYrEl.textContent = formatEur(sim.threeYearSavings);
+
+  const askBtn = document.getElementById("whatif-ask-btn");
+  if (askBtn) {
+    const targetPct = pct > 0 ? pct : 20;
+    askBtn.innerHTML = `Ask Oiva how to trim ${targetPct}% <span>→</span>`;
+  }
+}
+
+function renderSBonusCard(txs) {
+  const sb = calculateSBonus(txs);
+
+  const tierBadge = document.getElementById("sbonus-tier-badge");
+  if (tierBadge) {
+    tierBadge.textContent = sb.tierPct > 0 ? `${sb.tierPct.toFixed(1)}% tier` : "Up to 5%";
+  }
+
+  const summaryEl = document.getElementById("sbonus-summary-text");
+  if (summaryEl) {
+    summaryEl.innerHTML = `With <strong>${formatEur(sb.monthlyGroceries)}/mo</strong> in groceries plus everyday purchases (${formatEur(sb.eligibleMonthly)}/mo total), concentrating spend at S-Group earns an est. <strong>${sb.tierPct.toFixed(1)}% S-Bonus</strong>.`;
+  }
+
+  const monthlyEl = document.getElementById("sbonus-monthly");
+  if (monthlyEl) monthlyEl.textContent = `${formatEur(sb.monthlyBonus)}/mo`;
+
+  const subEl = document.getElementById("sbonus-eligible-sub");
+  if (subEl) subEl.textContent = `${formatEur(sb.annualCashBonus)}/yr cash reward`;
+
+  const fundEl = document.getElementById("sbonus-1yr-fund");
+  if (fundEl) fundEl.textContent = formatEur(sb.fundOneYear);
+
+  const gainEl = document.getElementById("sbonus-fund-gain");
+  if (gainEl) {
+    gainEl.textContent =
+      sb.fundGainOneYear > 0
+        ? `+${formatEur(sb.fundGainOneYear)} growth @ est. 7% p.a.`
+        : "auto-invested via S-Pankki fund";
+  }
 }
 
 function renderInsightBars(txs, months) {
@@ -1242,16 +1691,20 @@ function populateCustomerDropdown() {
   const existingVal = select.value || currentCustomerId;
   const fragment = document.createDocumentFragment();
 
-  // Sort customer IDs
-  const cids = Array.from(customerProfiles.keys()).sort();
-  // If no customer profiles loaded yet, use customers found in transactions
-  const finalCids = cids.length ? cids : Array.from(allCustomersMap.keys()).sort();
+  // Sort customer IDs; when transactions are loaded, prioritize customers with active transaction records
+  const profileCids = Array.from(customerProfiles.keys()).sort();
+  const txCids = Array.from(allCustomersMap.keys()).sort();
+  const filteredCids =
+    txCids.length && profileCids.length
+      ? profileCids.filter((cid) => allCustomersMap.has(cid))
+      : profileCids;
+  const finalCids = filteredCids.length ? filteredCids : txCids;
 
   finalCids.forEach((cid) => {
     const p = customerProfiles.get(cid);
     const opt = document.createElement("option");
     opt.value = cid;
-    opt.textContent = p ? `${cid} (Age ${p.customer_age}, ${p.customer_postal_code})` : cid;
+    opt.textContent = p && p.customer_age ? `${cid} · Age ${p.customer_age}` : cid;
     fragment.appendChild(opt);
   });
 
@@ -1439,6 +1892,70 @@ function switchCustomer(cid) {
 }
 
 // --------------------------------------------------------------------------
+// Gemini API Key Modal & Status Helpers
+// --------------------------------------------------------------------------
+
+function getStoredGeminiKey() {
+  try {
+    return (localStorage.getItem("oiva_gemini_key") || "").trim();
+  } catch (err) {
+    return "";
+  }
+}
+
+function syncApiKeyUI() {
+  const hasKey = Boolean(getStoredGeminiKey());
+  const keyBtn = document.getElementById("api-key-btn");
+  const keyDot = document.getElementById("api-key-dot");
+  const modalStatus = document.getElementById("api-modal-status");
+  const modalDot = document.getElementById("api-modal-dot");
+  const modalText = document.getElementById("api-modal-status-text");
+  const chatEngineLabel = document.getElementById("chat-engine-label");
+
+  if (keyBtn) {
+    keyBtn.classList.toggle("has-key", hasKey);
+    keyBtn.title = hasKey ? "Gemini API key active" : "Configure Gemini API key";
+  }
+  if (keyDot) {
+    keyDot.hidden = !hasKey;
+  }
+  if (modalStatus && modalDot && modalText) {
+    modalStatus.classList.toggle("active-key", hasKey);
+    modalDot.classList.toggle("status-dot-muted", !hasKey);
+    modalText.textContent = hasKey
+      ? "Gemini API key active · live coaching enabled"
+      : "Local calculation mode (no API key active)";
+  }
+  if (chatEngineLabel) {
+    chatEngineLabel.textContent = hasKey ? "Gemini Ready" : "Ready";
+  }
+}
+
+function openApiKeyModal() {
+  const modal = document.getElementById("api-key-modal");
+  const input = document.getElementById("api-key-input");
+  const visBtn = document.getElementById("toggle-api-key-visibility");
+  if (!modal) return;
+
+  if (input) {
+    input.value = getStoredGeminiKey();
+    input.type = "password";
+  }
+  if (visBtn) {
+    visBtn.textContent = "Show";
+    visBtn.setAttribute("aria-label", "Show API key");
+  }
+  syncApiKeyUI();
+  modal.hidden = false;
+}
+
+function closeApiKeyModal() {
+  const modal = document.getElementById("api-key-modal");
+  if (modal) modal.hidden = true;
+  document.body.classList.remove("keyboard-open");
+}
+
+// --------------------------------------------------------------------------
 // Event Listeners & Initialization
 // --------------------------------------------------------------------------
 
@@ -1455,8 +1972,8 @@ document.querySelectorAll("[data-view-target]").forEach((button) => {
   });
 });
 
-// Prompt buttons (suggestion chips)
-document.querySelectorAll("[data-prompt]").forEach((button) => {
+// Prompt buttons (suggestion chips without view-target to prevent double firing)
+document.querySelectorAll("[data-prompt]:not([data-view-target])").forEach((button) => {
   button.addEventListener("click", () => ask(button.dataset.prompt));
 });
 
@@ -1470,6 +1987,112 @@ document.querySelectorAll(".category-row").forEach((button) => {
   });
 });
 
+// Recurring Bills expandable pill toggle inside Safe-to-Spend card
+const recurringToggleBtn = document.getElementById("recurring-bills-toggle");
+const recurringDrawerEl = document.getElementById("recurring-bills-list");
+if (recurringToggleBtn && recurringDrawerEl) {
+  recurringToggleBtn.addEventListener("click", () => {
+    const isExpanded = recurringToggleBtn.getAttribute("aria-expanded") === "true";
+    recurringToggleBtn.setAttribute("aria-expanded", String(!isExpanded));
+    recurringDrawerEl.hidden = isExpanded;
+  });
+}
+
+// Interactive What-If Savings Simulator slider & Ask Oiva link
+const whatIfSliderEl = document.getElementById("whatif-slider");
+if (whatIfSliderEl) {
+  whatIfSliderEl.addEventListener("input", () => {
+    updateWhatIfSimulator(transactionData);
+  });
+}
+
+const whatIfAskBtn = document.getElementById("whatif-ask-btn");
+if (whatIfAskBtn) {
+  whatIfAskBtn.addEventListener("click", () => {
+    const pct = Number(whatIfSliderEl?.value) || 20;
+    const targetPct = pct > 0 ? pct : 20;
+    showView("chat");
+    ask(`How much could I save if I cut everyday treats (dining, entertainment & lifestyle) by ${targetPct}%?`);
+  });
+}
+
+// S-Bonus Ecosystem card -> Ask Oiva breakdown
+const sbonusAskBtn = document.getElementById("sbonus-ask-btn");
+if (sbonusAskBtn) {
+  sbonusAskBtn.addEventListener("click", () => {
+    showView("chat");
+    ask("How much S-Bonus could I earn and grow in an S-Pankki fund?");
+  });
+}
+
+// Gemini API Key Modal controls
+const apiKeyBtn = document.getElementById("api-key-btn");
+const apiKeyModal = document.getElementById("api-key-modal");
+const closeApiModalBtn = document.getElementById("close-api-modal-btn");
+const saveApiKeyBtn = document.getElementById("save-api-key-btn");
+const clearApiKeyBtn = document.getElementById("clear-api-key-btn");
+const apiKeyInput = document.getElementById("api-key-input");
+const toggleApiVisBtn = document.getElementById("toggle-api-key-visibility");
+
+if (apiKeyBtn) {
+  apiKeyBtn.addEventListener("click", openApiKeyModal);
+}
+if (closeApiModalBtn) {
+  closeApiModalBtn.addEventListener("click", closeApiKeyModal);
+}
+if (apiKeyModal) {
+  apiKeyModal.addEventListener("click", (e) => {
+    if (e.target === apiKeyModal) closeApiKeyModal();
+  });
+}
+if (toggleApiVisBtn && apiKeyInput) {
+  toggleApiVisBtn.addEventListener("click", () => {
+    const showing = apiKeyInput.type === "text";
+    apiKeyInput.type = showing ? "password" : "text";
+    toggleApiVisBtn.textContent = showing ? "Show" : "Hide";
+    toggleApiVisBtn.setAttribute("aria-label", showing ? "Show API key" : "Hide API key");
+  });
+}
+if (saveApiKeyBtn && apiKeyInput) {
+  const saveKeyAction = () => {
+    const val = apiKeyInput.value.trim();
+    try {
+      if (val) {
+        localStorage.setItem("oiva_gemini_key", val);
+      } else {
+        localStorage.removeItem("oiva_gemini_key");
+      }
+    } catch (err) {
+      console.warn("Could not write to localStorage:", err);
+    }
+    syncApiKeyUI();
+    closeApiKeyModal();
+  };
+  saveApiKeyBtn.addEventListener("click", saveKeyAction);
+  apiKeyInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      saveKeyAction();
+    }
+  });
+}
+if (clearApiKeyBtn && apiKeyInput) {
+  clearApiKeyBtn.addEventListener("click", () => {
+    try {
+      localStorage.removeItem("oiva_gemini_key");
+    } catch (err) {
+      console.warn("Could not clear localStorage:", err);
+    }
+    apiKeyInput.value = "";
+    syncApiKeyUI();
+  });
+}
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && apiKeyModal && !apiKeyModal.hidden) {
+    closeApiKeyModal();
+  }
+});
+
 // Chat submit
 document.getElementById("chat-form").addEventListener("submit", (event) => {
   event.preventDefault();
@@ -1478,19 +2101,19 @@ document.getElementById("chat-form").addEventListener("submit", (event) => {
   input.value = "";
 });
 
-// iOS keyboard open/close — hide bottom nav so it doesn't cover the chat input
-const chatInputEl = document.getElementById("chat-input");
-if (chatInputEl) {
-  chatInputEl.addEventListener("focus", () => {
+// iOS keyboard open/close — hide bottom nav so it doesn't cover text inputs
+[document.getElementById("chat-input"), apiKeyInput].forEach((inputEl) => {
+  if (!inputEl) return;
+  inputEl.addEventListener("focus", () => {
     document.body.classList.add("keyboard-open");
   });
-  chatInputEl.addEventListener("blur", () => {
+  inputEl.addEventListener("blur", () => {
     // Small delay so the nav doesn't flicker back before the keyboard fully closes
     window.setTimeout(() => {
       document.body.classList.remove("keyboard-open");
     }, 150);
   });
-}
+});
 
 // Customer Switcher change
 const customerSelect = document.getElementById("customer-select");
@@ -1528,6 +2151,7 @@ if (loadBtn && fileInput) {
 
 // Initial boot
 async function init() {
+  syncApiKeyUI();
   showView("home");
   await loadCustomerCsv();
   await loadTransactionsCsv();
